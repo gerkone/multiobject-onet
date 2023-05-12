@@ -5,4 +5,5 @@ encoder_dict = {
     "pointnet_crop_local_pool": pointnet.PatchLocalPoolPointnet,
     "pointnet_plus_plus": pointnetpp.PointNetPlusPlus,
     "voxel_simple_local": voxels.LocalVoxelEncoder,
+    "egnn": egnn.EGNNLocal,
 }

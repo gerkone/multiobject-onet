@@ -5,6 +5,7 @@ from src import conv_onet, data, mo_onet
 
 method_dict = {
     "conv_onet": conv_onet,
+    "mo_onet": mo_onet,
 }
 
 
