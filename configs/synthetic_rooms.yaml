@@ -1,0 +1,47 @@
+method: mo_onet
+data:
+  input_type: pointcloud
+  classes: ["rooms_04"] # , "rooms_05", "rooms_06", "rooms_07", "rooms_08"]
+  path: /local/disk1/gg/data/synthetic_room_dataset
+  pointcloud_n: 500 # 5000 is probably a reasonable number for real training
+  pointcloud_noise: 0.005
+  points_subsample: 1024 # 2048
+  points_file: points_iou
+  points_iou_file: points_iou
+  pointcloud_file: pointcloud
+  pointcloud_chamfer_file: pointcloud
+  multi_files: 10
+  voxels_file: null
+model:
+  decoder: equi_mlp
+  encoder: egnn
+  segmenter: pointnet
+  e2e: True
+  decoder_kwargs: {}
+  segmenter_kwargs: {}
+  encoder_kwargs: {}
+  multi_gpu: False
+  c_dim: 512
+training:
+  out_dir:  out/default
+  batch_size: 64
+  print_every: 200
+  visualize_every: 1000
+  checkpoint_every: 1000
+  validate_every: 2000
+  backup_every: 100000
+  eval_sample: False
+  model_selection_metric: loss
+  model_selection_mode: minimize
+  n_workers: 4
+  n_workers_val: 4
+test:
+  threshold: 0.5
+  eval_mesh: True
+  eval_pointcloud: True
+  remove_wall: False
+generation:
+  vis_n_outputs: 2
+  refine: false
+  n_x: 128
+  n_z: 1
