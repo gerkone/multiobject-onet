@@ -1,15 +1,17 @@
+from abc import ABC, abstractmethod
+
 import torch
 import torch.nn as nn
 from torch import distributions as dist
 
-from src.conv_onet.models import decoder as onet_decoder
+from src.conv_onet.models import decoder as onetdecoder
 from src.mo_onet.models import decoder, segmenter
 
 decoder_dict = {
     "equi_mlp": decoder.EquivariantMLP,
-    "simple_local": onet_decoder.LocalDecoder,
-    "simple_local_crop": onet_decoder.PatchLocalDecoder,
-    "simple_local_point": onet_decoder.LocalPointDecoder,
+    "simple_local": onetdecoder.LocalDecoder,
+    "simple_local_crop": onetdecoder.PatchLocalDecoder,
+    "simple_local_point": onetdecoder.LocalPointDecoder,
 }
 
 segmenter_dict = {
@@ -17,7 +19,49 @@ segmenter_dict = {
 }
 
 
-class TwoStepMultiObjectONet(nn.Module):
+class MultiObjectONet(ABC, nn.Module):
+    """Abstract base class for multi-object occupancy networks."""
+    def __init__(self):
+        super().__init__()
+
+    @abstractmethod
+    def encode_and_segment(self, pc):
+        """Encodes and segments the input.
+
+        Args:
+            pc (tensor): the input point cloud (batch_sie, n_points, 3)
+        Returns:
+            codes (list): list of latent conditioned codes
+        """
+        raise NotImplementedError
+    
+    @abstractmethod
+    def decode_multi_object(self, q, codes, **kwargs):
+        """Returns full scene occupancy probabilities for the sampled points.
+
+        Args:
+            q (tensor): points (batch_size, n_sample_points, 3)
+            c (tensor): latent conditioned code c
+        Returns:
+            p_r (tensor): occupancy probs (batch_size, n_objects, n_sample_points)
+        """
+        raise NotImplementedError
+    
+    def decode_single_object(self, q, c, **kwargs):
+        """Returns single object occupancy probabilities for the sampled points.
+
+        Args:
+            p (tensor): points (batch_size, n_sample_points, 3)
+            c (tensor): latent conditioned code c
+        Returns:
+            p_r (tensor): occupancy probs (batch_size, n_sample_points)
+        """
+        logits = self.decoder(q, c, **kwargs)
+        p_r = dist.Bernoulli(logits=logits)
+        return p_r
+
+
+class TwoStepMultiObjectONet(MultiObjectONet):
     """Two step (segment first, embed later) multi-object occupancy network.
 
     Args:
@@ -30,14 +74,14 @@ class TwoStepMultiObjectONet(nn.Module):
     def __init__(self, decoder, segmenter, encoder=None, device=None):
         super().__init__()
 
-        self._decoder = decoder.to(device)
+        self.decoder = decoder.to(device)
 
         self._segmenter = segmenter.to(device)
 
         if encoder is not None:
-            self._encoder = encoder.to(device)
+            self.encoder = encoder.to(device)
         else:
-            self._encoder = None
+            self.encoder = None
 
         self._device = device
 
@@ -50,10 +94,13 @@ class TwoStepMultiObjectONet(nn.Module):
             q (tensor): sampled points (batch_size, n_sample_points, 3)
             pc (tensor): conditioning input (batch_sie, n_points, 3)
         """
-        segmented_objects = self.segment_to_single_graphs(pc)
-        codes = self.encode_multi_object(segmented_objects)
+        codes = self.encode_and_segment(pc)
         p_r = self.decode_multi_object(q, codes, **kwargs)
         return p_r
+    
+    def encode_and_segment(self, pc):
+        segmented_objects = self.segment_to_single_graphs(pc)
+        return self.encode_multi_object(segmented_objects)
 
     def encode_multi_object(self, segmented_objects):
         """Encodes the input.
@@ -62,7 +109,7 @@ class TwoStepMultiObjectONet(nn.Module):
             segmented_objects (tensor): list of single object point clouds
         """
         # TODO can be done in parallel
-        return [self._encoder(obj) for obj in segmented_objects]
+        return [self.encoder(obj) for obj in segmented_objects]
 
     def segment_to_single_graphs(self, pc):
         """Segments the input point cloud into single shapes.
@@ -78,12 +125,6 @@ class TwoStepMultiObjectONet(nn.Module):
         return segmented_objects
 
     def decode_multi_object(self, q, codes, **kwargs):
-        """Returns full scene occupancy probabilities for the sampled points.
-
-        Args:
-            q (tensor): points (batch_size, n_sample_points, 3)
-            c (tensor): latent conditioned code c
-        """
         # TODO should operate everywhere in unit cube right?
         occupancy_probs = []
         for c in codes:
@@ -91,13 +132,7 @@ class TwoStepMultiObjectONet(nn.Module):
         return p_r
 
     def decode_single_object(self, q, c, **kwargs):
-        """Returns single object occupancy probabilities for the sampled points.
-
-        Args:
-            p (tensor): points (batch_size, n_sample_points, 3)
-            c (tensor): latent conditioned code c
-        """
-        logits = self._decoder(q, c, **kwargs)
+        logits = self.decoder(q, c, **kwargs)
         p_r = dist.Bernoulli(logits=logits)
         return p_r
 
@@ -112,7 +147,7 @@ class TwoStepMultiObjectONet(nn.Module):
         return model
 
 
-class E2EMultiObjectONet(nn.Module):
+class E2EMultiObjectONet(MultiObjectONet):
     """End-to-end (segment and embed) multi-object occupancy network.
 
     Args:
@@ -124,12 +159,12 @@ class E2EMultiObjectONet(nn.Module):
     def __init__(self, decoder, encoder=None, device=None):
         super().__init__()
 
-        self._decoder = decoder.to(device)
+        self.decoder = decoder.to(device)
 
         if encoder is not None:
-            self._encoder = encoder.to(device)
+            self.encoder = encoder.to(device)
         else:
-            self._encoder = None
+            self.encoder = None
 
         self._device = device
 
@@ -142,8 +177,7 @@ class E2EMultiObjectONet(nn.Module):
             q (tensor): sampled points (batch_size, n_sample_points, 3)
             pc (tensor): conditioning input (batch_sie, n_points, 3)
         """
-        node_embedding, node_tag = self.encode_and_segment(pc)
-        codes = self.pool_codes_segmented(node_embedding, node_tag)
+        codes = self.encode_and_segment(pc)
         p_r = self.decode_multi_object(q, codes, **kwargs)
         return p_r
 
@@ -159,27 +193,14 @@ class E2EMultiObjectONet(nn.Module):
         return codes
 
     def encode_and_segment(self, pc):
-        """Encodes and segments the input.
-
-        Args:
-            pc (tensor): the input point cloud (batch_sie, n_points, 3)
-        """
-        # TODO what is pc?
-        # TODO feature extraction for pc
-        node_embedding = None  # self._encoder(pc)
-        # TODO segment based on code
-        node_tag = None
+        # embed to latent code and segment
+        node_embedding, node_tag = self.encoder(pc)
         # TODO get scene builder metadata from node_tag and pc
         self.scene_builder_metadata = None
-        return node_embedding, node_tag
+        
+        return self.pool_codes_segmented(node_embedding, node_tag)
 
     def decode_multi_object(self, q, codes, **kwargs):
-        """Returns full scene occupancy probabilities for the sampled points.
-
-        Args:
-            p (tensor): points (batch_size, n_sample_points, 3)
-            c (tensor): latent conditioned code c
-        """
         # TODO should operate everywhere in unit cube right?
         occupancy_probs = []
         for c in codes:
@@ -187,13 +208,7 @@ class E2EMultiObjectONet(nn.Module):
         return occupancy_probs
 
     def decode_single_object(self, q, c, **kwargs):
-        """Returns single object occupancy probabilities for the sampled points.
-
-        Args:
-            p (tensor): points (batch_size, n_sample_points, 3)
-            c (tensor): latent conditioned code c
-        """
-        logits = self._decoder(q, c, **kwargs)
+        logits = self.decoder(q, c, **kwargs)
         p_r = dist.Bernoulli(logits=logits)
         return p_r
 

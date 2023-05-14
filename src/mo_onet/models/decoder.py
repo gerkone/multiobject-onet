@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-# TODO encoder
+# TODO decoder
 
 
 class EquivariantMLP(nn.Module):
@@ -22,5 +22,5 @@ class EquivariantMLP(nn.Module):
         """
         super().__init__()
 
-    def forward(self, p, z, c, **kwargs):
+    def forward(self, p, c, **kwargs):
         pass

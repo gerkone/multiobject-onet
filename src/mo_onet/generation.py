@@ -101,7 +101,7 @@ class MultiObjectGenerator3D(object):
             )
             t0 = time.time()
             with torch.no_grad():
-                codes = self.model.encode_inputs(inputs)
+                codes = self.model.encode_and_segment(inputs)
         stats_dict["time (encode inputs)"] = time.time() - t0
 
         # generate list of meshes
@@ -254,7 +254,7 @@ class MultiObjectGenerator3D(object):
             )
 
         with torch.no_grad():
-            codes = self.model.encode_inputs(input_cur)
+            codes = self.model.encode_and_segment(input_cur)
         return codes
 
     def _predict_crop_occ_single_shape(self, pi, c, vol_bound=None, **kwargs):
@@ -317,12 +317,12 @@ class MultiObjectGenerator3D(object):
                         )
                     pi_in["p_n"] = p_n
                     with torch.no_grad():
-                        occ_hat = self.model.decode_single(pi_in, c, **kwargs).logits
+                        occ_hat = self.model.decode_single_object(pi_in, c, **kwargs).logits
                     occ_hats.append(occ_hat.squeeze(0).detach().cpu())
             else:
                 pi = pi.unsqueeze(0).to(self.device)
                 with torch.no_grad():
-                    occ_hat = self.model.decode_single(pi, c, **kwargs).logits
+                    occ_hat = self.model.decode_single_object(pi, c, **kwargs).logits
                 occ_hats.append(occ_hat.squeeze(0).detach().cpu())
 
         occ_hat = torch.cat(occ_hats, dim=0)
@@ -414,7 +414,7 @@ class MultiObjectGenerator3D(object):
         for vi in vertices_split:
             vi = vi.unsqueeze(0).to(device)
             vi.requires_grad_()
-            occ_hat = self.model.decode_single(vi, c).logits
+            occ_hat = self.model.decode_single_object(vi, c).logits
             out = occ_hat.sum()
             out.backward()
             ni = -vi.grad
@@ -431,7 +431,7 @@ class MultiObjectGenerator3D(object):
         Args:
             mesh (trimesh object): predicted mesh
             occ_hat (tensor): predicted occupancy grid
-            c (tensor): latent conditioned code c
+            c (tensor): latent conditioned code
         """
         # TODO
         self.model.eval()
@@ -452,7 +452,7 @@ class MultiObjectGenerator3D(object):
         # Start optimization
         optimizer = optim.RMSprop([v], lr=1e-4)
 
-        for it_r in trange(self.refinement_step):
+        for _ in trange(self.refinement_step):
             optimizer.zero_grad()
 
             # Loss
@@ -466,7 +466,7 @@ class MultiObjectGenerator3D(object):
             face_normal = torch.cross(face_v1, face_v2)
             face_normal = face_normal / (face_normal.norm(dim=1, keepdim=True) + 1e-10)
             face_value = torch.sigmoid(
-                self.model.decode(face_point.unsqueeze(0), c).logits
+                self.model.decode_single_object(face_point.unsqueeze(0), c).logits
             )
             normal_target = -autograd.grad(
                 [face_value.sum()], [face_point], create_graph=True

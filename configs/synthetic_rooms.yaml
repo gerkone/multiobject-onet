@@ -19,12 +19,12 @@ model:
   e2e: True
   decoder_kwargs: {}
   segmenter_kwargs: {}
-  encoder_kwargs: {}
+  encoder_kwargs: {"hidden_dim": 64, "n_layers": 3, "n_neighbors": 5}
   multi_gpu: False
-  c_dim: 512
+  c_dim: 128
 training:
   out_dir:  out/default
-  batch_size: 64
+  batch_size: 32 # limited by GPU memory
   print_every: 200
   visualize_every: 1000
   checkpoint_every: 1000
