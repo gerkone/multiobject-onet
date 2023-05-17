@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
 from torch import distributions as dist
+from sklearn.cluster import DBSCAN
+import numpy as np
 
 from src.conv_onet.models import decoder as onetdecoder
 from src.mo_onet.models import decoder, segmenter
@@ -15,14 +17,17 @@ decoder_dict = {
 }
 
 segmenter_dict = {
-    "pointnet": segmenter.PointNetSegmenter,
+    "pointnet++": segmenter.PointNet2Segmenter,
 }
 
 
 class MultiObjectONet(ABC, nn.Module):
     """Abstract base class for multi-object occupancy networks."""
+
     def __init__(self):
         super().__init__()
+
+        self.scene_builder_metadata = {"normalization": None, "baricenters": None}
 
     @abstractmethod
     def encode_and_segment(self, pc):
@@ -32,9 +37,10 @@ class MultiObjectONet(ABC, nn.Module):
             pc (tensor): the input point cloud (batch_sie, n_points, 3)
         Returns:
             codes (list): list of latent conditioned codes
+            node_tag (tensor): segmentation node probs (batch_size, n_points, n_classes)
         """
         raise NotImplementedError
-    
+
     @abstractmethod
     def decode_multi_object(self, q, codes, **kwargs):
         """Returns full scene occupancy probabilities for the sampled points.
@@ -46,7 +52,7 @@ class MultiObjectONet(ABC, nn.Module):
             p_r (tensor): occupancy probs (batch_size, n_objects, n_sample_points)
         """
         raise NotImplementedError
-    
+
     def decode_single_object(self, q, c, **kwargs):
         """Returns single object occupancy probabilities for the sampled points.
 
@@ -76,7 +82,7 @@ class TwoStepMultiObjectONet(MultiObjectONet):
 
         self.decoder = decoder.to(device)
 
-        self._segmenter = segmenter.to(device)
+        self.segmenter = segmenter.to(device)
 
         if encoder is not None:
             self.encoder = encoder.to(device)
@@ -85,8 +91,6 @@ class TwoStepMultiObjectONet(MultiObjectONet):
 
         self._device = device
 
-        self.scene_builder_metadata = {"normalization": None, "baricenters": None}
-
     def forward(self, q, pc, **kwargs):
         """Performs a forward pass through the network.
 
@@ -94,13 +98,13 @@ class TwoStepMultiObjectONet(MultiObjectONet):
             q (tensor): sampled points (batch_size, n_sample_points, 3)
             pc (tensor): conditioning input (batch_sie, n_points, 3)
         """
-        codes = self.encode_and_segment(pc)
+        codes, _ = self.encode_and_segment(pc)
         p_r = self.decode_multi_object(q, codes, **kwargs)
         return p_r
-    
+
     def encode_and_segment(self, pc):
-        segmented_objects = self.segment_to_single_graphs(pc)
-        return self.encode_multi_object(segmented_objects)
+        segmented_objects, node_tags = self.segment_to_single_graphs(pc)
+        return self.encode_multi_object(segmented_objects), node_tags
 
     def encode_multi_object(self, segmented_objects):
         """Encodes the input.
@@ -116,25 +120,51 @@ class TwoStepMultiObjectONet(MultiObjectONet):
 
         Args:
             pc (tensor): the input point cloud (batch_sie, n_points, 3)
+        Returns:
+            segmented_objects (list): list of single object point clouds
+            node_tag (tensor): segmentation node probs (batch_size, n_points, n_classes)
         """
-        node_tags = self._segmenter(pc)
+        node_tags, _ = self.segmenter(pc)
         # TODO get scene builder metadata from node_tag and pc
         self.scene_builder_metadata = None
-        # TODO split graphs on node_tag
-        segmented_objects = None
-        return segmented_objects
+        # split graphs on node_tag
+        segmented_objects = self._split_graphs(pc, torch.argmax(node_tags, dim=-1))
+        return segmented_objects, node_tags
 
     def decode_multi_object(self, q, codes, **kwargs):
+        # TODO can be done in parallel
         # TODO should operate everywhere in unit cube right?
-        occupancy_probs = []
-        for c in codes:
-            p_r = self.decode_single_object(q, c, **kwargs)
-        return p_r
+        return [self.decode_single_object(q, c, **kwargs) for c in codes]
 
     def decode_single_object(self, q, c, **kwargs):
         logits = self.decoder(q, c, **kwargs)
         p_r = dist.Bernoulli(logits=logits)
         return p_r
+
+    def _split_graphs(self, pc, node_tag):
+        """Splits the input point cloud into multiple graphs depending on the node tag.
+
+        Args:
+            pc (tensor): input point cloud (batch_size, n_points, 3)
+            node_tag (tensor): node integer tag (batch_size, n_points)
+        Returns:
+            graphs (list): list of graphs for each single object
+        """
+        pc = pc.detach().cpu().numpy()
+        node_tag = node_tag.detach().cpu().numpy()
+        graphs = []
+        tag_range = range(node_tag.min(), node_tag.max() + 1)
+        for tag in tag_range:
+            # first split by tag directly
+            tag_mask = node_tag == tag
+            n_nodes = tag_mask.sum(-1)
+            graphs.append((torch.tensor(pc[tag_mask]), torch.tensor(n_nodes)))
+            # TODO then split each object by grouping close points
+            # avg_dist = np.sqrt(np.sum(np.square(pc.reshape(-1, 3) - pc.reshape(-1, 3).mean(0)), axis=-1)).mean()
+            # dbscan = DBSCAN(0.5 * avg_dist, min_samples=int(n_nodes.mean() // 5))
+            # object_masks = [dbscan.fit_predict(pc_[mask_]) for pc_, mask_ in zip(pc, tag_mask)]
+
+        return graphs
 
     def to(self, device):
         """Puts the model to the device.
@@ -197,7 +227,7 @@ class E2EMultiObjectONet(MultiObjectONet):
         node_embedding, node_tag = self.encoder(pc)
         # TODO get scene builder metadata from node_tag and pc
         self.scene_builder_metadata = None
-        
+
         return self.pool_codes_segmented(node_embedding, node_tag)
 
     def decode_multi_object(self, q, codes, **kwargs):

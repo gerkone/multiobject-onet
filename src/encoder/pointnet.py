@@ -3,8 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_scatter import scatter_max, scatter_mean
 
-from src.common import (coordinate2index, map2local, normalize_3d_coordinate,
-                        normalize_coordinate)
+from src.common import (
+    coordinate2index,
+    map2local,
+    normalize_3d_coordinate,
+    normalize_coordinate,
+)
 from src.encoder.unet import UNet
 from src.encoder.unet3d import UNet3D
 from src.layers import ResnetBlockFC

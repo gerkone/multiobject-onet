@@ -27,9 +27,12 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     encoder = cfg["model"]["encoder"]
     e2e = cfg["model"]["e2e"]
     dim = cfg["data"]["dim"]
+    n_nodes = cfg["data"]["pointcloud_n"]
     c_dim = cfg["model"]["c_dim"]
     decoder_kwargs = cfg["model"]["decoder_kwargs"]
     segmenter_kwargs = cfg["model"]["segmenter_kwargs"]
+    # TODO
+    n_classes = 4  # cfg["data"]["n_classes"]
     encoder_kwargs = cfg["model"]["encoder_kwargs"]
 
     padding = cfg["data"]["padding"]
@@ -86,10 +89,16 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     if e2e:
         model = models.E2EMultiObjectONet(decoder, encoder, device=device)
     else:
-        # TODO segmenter
         segmenter = models.segmenter_dict[segmenter](
-            dim=dim, c_dim=c_dim, padding=padding, **segmenter_kwargs
+            n_points=n_nodes, n_classes=n_classes, **segmenter_kwargs
         )
+        # load pretrained segmentation net
+        # TODO read from config
+        ckp = torch.load(
+            open(os.path.join(os.getcwd(), "pretrained/pointnet2_segmenter.pth"), "rb")
+        )
+        ckp = _filter_state_dict(ckp)
+        segmenter.load_state_dict(ckp["model_state_dict"], strict=False)
         model = models.TwoStepMultiObjectONet(
             decoder, segmenter, encoder, device=device
         )
@@ -232,3 +241,17 @@ def get_data_fields(mode, cfg):
             fields["voxels"] = data.VoxelsField(voxels_file)
 
     return fields
+
+
+def _filter_state_dict(ckp, keep_first=False, keep_last=False):
+    # remove first layer (different input shape)
+    if not keep_first:
+        for k in list(ckp["model_state_dict"].keys()):
+            if "sa1" in k:
+                del ckp["model_state_dict"][k]
+    # remove classifier layer
+    if not keep_last:
+        del ckp["model_state_dict"]["conv2.weight"]
+        del ckp["model_state_dict"]["conv2.bias"]
+
+    return ckp

@@ -15,8 +15,8 @@ data:
 model:
   decoder: equi_mlp
   encoder: egnn
-  segmenter: pointnet
-  e2e: True
+  segmenter: pointnet++
+  e2e: False
   decoder_kwargs: {}
   segmenter_kwargs: {}
   encoder_kwargs: {"hidden_dim": 64, "n_layers": 3, "n_neighbors": 5}

@@ -317,7 +317,9 @@ class MultiObjectGenerator3D(object):
                         )
                     pi_in["p_n"] = p_n
                     with torch.no_grad():
-                        occ_hat = self.model.decode_single_object(pi_in, c, **kwargs).logits
+                        occ_hat = self.model.decode_single_object(
+                            pi_in, c, **kwargs
+                        ).logits
                     occ_hats.append(occ_hat.squeeze(0).detach().cpu())
             else:
                 pi = pi.unsqueeze(0).to(self.device)

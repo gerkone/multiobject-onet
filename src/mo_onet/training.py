@@ -137,6 +137,9 @@ class Trainer(BaseTrainer):
         p = data.get("points").to(device)
         occ = data.get("points.occ").to(device)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
+        # TODO where to get seg_target from?
+        # seg_target = data.get("seg_target").to(device)
+        seg_target = torch.ones((inputs.shape[0], inputs.shape[1], 4))
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -148,8 +151,9 @@ class Trainer(BaseTrainer):
             p = add_key(p, data.get("points.normalized"), "p", "p_n", device=device)
 
         if isinstance(self.model, TwoStepMultiObjectONet):
-            segmented_objects = self.model.segment_to_single_graphs(inputs)
-            # TODO can apply additional segmentation loss here
+            segmented_objects, node_tag = self.model.encode_and_segment(inputs)
+            # segmentation loss
+            seg_loss = F.nll_loss(node_tag, seg_target)
             codes = self.model.encode_multi_object(segmented_objects)
 
         if isinstance(self.model, E2EMultiObjectONet):
@@ -166,6 +170,8 @@ class Trainer(BaseTrainer):
         loss_i = F.binary_cross_entropy_with_logits(
             logit_list, occ, reduction="none"
         ).sum(-1)
-        loss = loss_i.sum(-1).mean()
+        reconstruction_loss = loss_i.sum(-1).mean()
 
-        return loss
+        total_loss = reconstruction_loss + seg_loss
+
+        return total_loss

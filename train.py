@@ -79,6 +79,7 @@ if __name__ == "__main__":
         worker_init_fn=data.worker_init_fn,
     )
 
+    # TODO put back in
     # For visualizations
     # vis_loader = torch.utils.data.DataLoader(
     #     val_dataset,
@@ -162,6 +163,7 @@ if __name__ == "__main__":
                     f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, time: {time.time() - t0}, {t.hour}:{t.minute}"
                 )
 
+            # TODO put back in
             # Visualize output
             # if visualize_every > 0 and (it % visualize_every) == 0:
             #     print("Visualizing")
