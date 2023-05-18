@@ -4,7 +4,6 @@ import torch
 from torch.nn import functional as F
 
 from src.common import add_key, compute_iou, make_3d_grid
-from src.mo_onet.models import E2EMultiObjectONet, TwoStepMultiObjectONet
 from src.training import BaseTrainer
 
 # TODO
@@ -72,7 +71,7 @@ class Trainer(BaseTrainer):
         eval_dict = {}
 
         points = data.get("points").to(device)
-        occ = data.get("points.occ").to(device)
+        # occ = data.get("points.occ").to(device)
 
         inputs = data.get("inputs", torch.empty(points.size(0), 0)).to(device)
         voxels_occ = data.get("voxels")
@@ -135,11 +134,13 @@ class Trainer(BaseTrainer):
         """
         device = self.device
         p = data.get("points").to(device)
-        occ = data.get("points.occ").to(device)
+        # TODO how to get occ per object?
+        occ = data.get("points.occ").to(device)  # (n_obj, batch_size, n_points)
+        occ = occ.repeat(4, 1, 1)  # TODO for now to match shapes
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        # TODO where to get seg_target from?
+        # TODO (NINA) where to get seg_target from?
         # seg_target = data.get("seg_target").to(device)
-        seg_target = torch.ones((inputs.shape[0], inputs.shape[1], 4))
+        seg_target = torch.randint(0, 4, (inputs.shape[0], inputs.shape[1])).to(device)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -150,28 +151,27 @@ class Trainer(BaseTrainer):
             # add pre-computed normalized coordinates
             p = add_key(p, data.get("points.normalized"), "p", "p_n", device=device)
 
-        if isinstance(self.model, TwoStepMultiObjectONet):
-            segmented_objects, node_tag = self.model.encode_and_segment(inputs)
-            # segmentation loss
-            seg_loss = F.nll_loss(node_tag, seg_target)
-            codes = self.model.encode_multi_object(segmented_objects)
-
-        if isinstance(self.model, E2EMultiObjectONet):
-            node_embedding, node_tag = self.model.encode_and_segment(inputs)
-            # TODO can apply additional segmentation loss here (node_tag)
-            codes = self.model.pool_codes_segmented(node_embedding, node_tag)
+        # segment and split objects
+        # codes = self.model.encode_and_segment(inputs)
+        # TODO ground truth segmentation
+        node_tag = seg_target
+        segmented_objects = self.model._split_object_instances(inputs, node_tag)
+        # encoder
+        codes = self.model.encode_multi_object(segmented_objects)
 
         kwargs = {}
-        # General points
+
         logit_list = torch.stack(
             [out.logits for out in self.model.decode_multi_object(p, codes, **kwargs)]
-        )
-        # TODO accumulate loss for each object
+        )  # (n_obj, batch_size, n_sample_points)
+        # TODO (GAL) accumulate loss for each object
         loss_i = F.binary_cross_entropy_with_logits(
             logit_list, occ, reduction="none"
-        ).sum(-1)
-        reconstruction_loss = loss_i.sum(-1).mean()
+        ).sum(
+            -1
+        )  # (n_obj, batch_size)
+        scene_reconstruction_loss = loss_i.sum(0).sum(-1).mean()
 
-        total_loss = reconstruction_loss + seg_loss
+        total_loss = scene_reconstruction_loss
 
         return total_loss
