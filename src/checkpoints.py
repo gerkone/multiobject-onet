@@ -5,7 +5,7 @@ import torch
 from torch.utils import model_zoo
 
 
-class CheckpointIO(object):
+class CheckpointIO:
     """CheckpointIO class.
 
     It handles saving and loading checkpoints.

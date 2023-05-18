@@ -1,10 +1,6 @@
 import os
 
-import numpy as np
 import torch
-import torch.distributions as dist
-from torch import nn
-from torchvision import transforms
 
 from src import data
 from src.common import decide_total_volume_range, update_reso
@@ -25,7 +21,6 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     decoder = cfg["model"]["decoder"]
     segmenter = cfg["model"]["segmenter"]
     encoder = cfg["model"]["encoder"]
-    e2e = cfg["model"]["e2e"]
     dim = cfg["data"]["dim"]
     n_nodes = cfg["data"]["pointcloud_n"]
     c_dim = cfg["model"]["c_dim"]
@@ -73,35 +68,23 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
             if bool(set(fea_type) & set(["xz", "xy", "yz"])):
                 encoder_kwargs["plane_resolution"] = dataset.total_reso
 
-    decoder = models.decoder_dict[decoder](
-        dim=dim, c_dim=c_dim, padding=padding, **decoder_kwargs
+    # TODO (GAL) add additional configs
+
+    decoder = models.decoder_dict[decoder](c_dim=c_dim, **decoder_kwargs)
+    encoder = encoder_dict[encoder](c_dim=c_dim, **encoder_kwargs)
+
+    segmenter = models.segmenter_dict[segmenter](
+        n_points=n_nodes, n_classes=n_classes, **segmenter_kwargs
     )
-
-    if encoder == "idx":
-        encoder = nn.Embedding(len(dataset), c_dim)
-    elif encoder is not None:
-        encoder = encoder_dict[encoder](
-            dim=dim, c_dim=c_dim, padding=padding, **encoder_kwargs
-        )
-    else:
-        encoder = None
-
-    if e2e:
-        model = models.E2EMultiObjectONet(decoder, encoder, device=device)
-    else:
-        segmenter = models.segmenter_dict[segmenter](
-            n_points=n_nodes, n_classes=n_classes, **segmenter_kwargs
-        )
-        # load pretrained segmentation net
-        # TODO read from config
+    # load pretrained segmentation net
+    if "pretrained" in segmenter_kwargs:
         ckp = torch.load(
-            open(os.path.join(os.getcwd(), "pretrained/pointnet2_segmenter.pth"), "rb")
+            open(os.path.join(os.getcwd(), segmenter_kwargs["pretrained"]), "rb")
         )
-        ckp = _filter_state_dict(ckp)
+        ckp = segmenter.filter_state_dict(ckp)
         segmenter.load_state_dict(ckp["model_state_dict"], strict=False)
-        model = models.TwoStepMultiObjectONet(
-            decoder, segmenter, encoder, device=device
-        )
+
+    model = models.MultiObjectONet(decoder, segmenter, encoder, device=device)
 
     return model
 
@@ -241,17 +224,3 @@ def get_data_fields(mode, cfg):
             fields["voxels"] = data.VoxelsField(voxels_file)
 
     return fields
-
-
-def _filter_state_dict(ckp, keep_first=False, keep_last=False):
-    # remove first layer (different input shape)
-    if not keep_first:
-        for k in list(ckp["model_state_dict"].keys()):
-            if "sa1" in k:
-                del ckp["model_state_dict"][k]
-    # remove classifier layer
-    if not keep_last:
-        del ckp["model_state_dict"]["conv2.weight"]
-        del ckp["model_state_dict"]["conv2.bias"]
-
-    return ckp

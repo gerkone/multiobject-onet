@@ -432,7 +432,7 @@ class Generator3D(object):
         vertices, triangles = marching_cubes(occ_hat_padded, threshold)
         stats_dict["time (marching cubes)"] = time.time() - t0
         # Strange behaviour in libmcubes: vertices are shifted by 0.5
-        # TODO investicate if its still the case
+        # TODO investigate if its still the case
         # vertices -= 0.5
         # # Undo padding
         vertices -= 1

@@ -211,7 +211,7 @@ class MultiObjectGenerator3D(object):
             device (device): pytorch device
             vol_bound (dict): volume boundary
         """
-        if vol_bound == None:
+        if vol_bound is None:
             vol_bound = self.vol_bound
 
         index = {}
