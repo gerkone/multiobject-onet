@@ -27,3 +27,5 @@ PKG-INFO
 /src/utils/libsimplify/simplify_mesh.cpp
 /src/utils/libsimplify/build
 __pycache__
+.DS_Store
+.idea*
