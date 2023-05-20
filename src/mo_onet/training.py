@@ -4,8 +4,8 @@ import torch
 from torch.nn import functional as F
 
 from src.common import add_key, compute_iou, make_3d_grid
-from src.training import BaseTrainer
 from src.mo_onet.utils import crop_occupancy_grid
+from src.training import BaseTrainer
 
 # TODO
 
@@ -170,11 +170,15 @@ class Trainer(BaseTrainer):
         p_crop = [p] * len(codes)
         occ_crop = [occ] * len(codes)
 
-        pred_occ = self.model.decode_multi_object(p_crop, codes, logits=True, **kwargs) # list n_obj (n_points_per_obj,)
+        pred_occ = self.model.decode_multi_object(
+            p_crop, codes, logits=True, **kwargs
+        )  # list n_obj (n_points_per_obj,)
         pred_occ = torch.cat([out for out in pred_occ])  # (total_n_points,)
         occ_crop = torch.cat(occ_crop)  # (total_n_points,)
 
-        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(pred_occ, occ_crop, reduction="none").mean()
+        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
+            pred_occ, occ_crop, reduction="none"
+        ).mean()
 
         total_loss = scene_reconstruction_loss
 

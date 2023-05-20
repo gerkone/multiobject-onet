@@ -42,7 +42,7 @@ class MultiObjectONet(nn.Module):
         Args:
             q (tensor): sampled points (n_sample_points, 3)
             pc (tensor): conditioning input (n_points, 3)
-        
+
         Returns:
             p_r (tensor): predicted occupancy values (n_sample_points)
             scene_metadata (dict): scene metadata for scene building
@@ -100,7 +100,10 @@ class MultiObjectONet(nn.Module):
         # TODO should operate everywhere in unit cube right?
         assert len(q) == len(codes)
         n_obj = len(q)
-        return [self.decode_single_object(q[i], codes[i], logits, **kwargs) for i in range(n_obj)]
+        return [
+            self.decode_single_object(q[i], codes[i], logits, **kwargs)
+            for i in range(n_obj)
+        ]
 
     def decode_single_object(self, q, c, logits=True, **kwargs):
         """Returns single object occupancy probabilities for the sampled points.
@@ -115,15 +118,14 @@ class MultiObjectONet(nn.Module):
             return self.decoder(q, c, **kwargs)
         return dist.Bernoulli(logits=logits)
 
-
     def build_scene_metadata(self, node_tag):
         """Builds scene metadata for scene building.
-        
+
         Args:
             node_tag (tensor): node integer tag (n_points,)
 
         Returns:
-            scene_metadata (dict): a Dict containing number of objects, barycenters 
+            scene_metadata (dict): a Dict containing number of objects, barycenters
                                 positions and normalization params.
         """
         # TODO get scene builder metadata from node_tag and pc

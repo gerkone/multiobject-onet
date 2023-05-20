@@ -3,6 +3,7 @@
 import torch
 from torch import nn
 
+
 class E_GCL(nn.Module):
     """
     E(n) Equivariant Convolutional Layer
