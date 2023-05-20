@@ -5,6 +5,7 @@ from torch.nn import functional as F
 
 from src.common import add_key, compute_iou, make_3d_grid
 from src.training import BaseTrainer
+from src.mo_onet.utils import crop_occupancy_grid
 
 # TODO
 
@@ -52,7 +53,11 @@ class Trainer(BaseTrainer):
         """
         self.model.train()
         self.optimizer.zero_grad()
-        loss = self.compute_loss(data)
+
+        # vmap over batch size
+        loss = torch.vmap(self.compute_loss, randomness="same")(data).mean()
+        # TODO (GAL) debugging only
+        # loss = self.compute_loss({k: v[0] for k, v in data.items()})
         loss.backward()
         self.optimizer.step()
 
@@ -134,13 +139,11 @@ class Trainer(BaseTrainer):
         """
         device = self.device
         p = data.get("points").to(device)
-        # TODO how to get occ per object?
-        occ = data.get("points.occ").to(device)  # (n_obj, batch_size, n_points)
-        occ = occ.repeat(4, 1, 1)  # TODO for now to match shapes
+        occ = data.get("points.occ").to(device)  # (n_points,)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
         # TODO (NINA) where to get seg_target from?
         # seg_target = data.get("seg_target").to(device)
-        seg_target = torch.randint(0, 4, (inputs.shape[0], inputs.shape[1])).to(device)
+        seg_target = torch.randint(0, 4, (inputs.shape[0],)).to(device)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -152,7 +155,6 @@ class Trainer(BaseTrainer):
             p = add_key(p, data.get("points.normalized"), "p", "p_n", device=device)
 
         # segment and split objects
-        # codes = self.model.encode_and_segment(inputs)
         # TODO ground truth segmentation
         node_tag = seg_target
         segmented_objects = self.model._split_object_instances(inputs, node_tag)
@@ -161,16 +163,18 @@ class Trainer(BaseTrainer):
 
         kwargs = {}
 
-        logit_list = torch.stack(
-            [out.logits for out in self.model.decode_multi_object(p, codes, **kwargs)]
-        )  # (n_obj, batch_size, n_sample_points)
-        # TODO (GAL) accumulate loss for each object
-        loss_i = F.binary_cross_entropy_with_logits(
-            logit_list, occ, reduction="none"
-        ).sum(
-            -1
-        )  # (n_obj, batch_size)
-        scene_reconstruction_loss = loss_i.sum(0).sum(-1).mean()
+        # TODO (GAL) find a way around dynamic indexing for cropping occupancy grid
+        # p_crop, occ_crop, _ = crop_occupancy_grid(
+        #     p, occ, segmented_objects
+        # )  # list n_obj (n_points_per_obj,)
+        p_crop = [p] * len(codes)
+        occ_crop = [occ] * len(codes)
+
+        pred_occ = self.model.decode_multi_object(p_crop, codes, logits=True, **kwargs) # list n_obj (n_points_per_obj,)
+        pred_occ = torch.cat([out for out in pred_occ])  # (total_n_points,)
+        occ_crop = torch.cat(occ_crop)  # (total_n_points,)
+
+        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(pred_occ, occ_crop, reduction="none").mean()
 
         total_loss = scene_reconstruction_loss
 

@@ -1,12 +1,7 @@
 """Adapted from https://github.com/vgsatorras/egnn"""
 
-from typing import Tuple
-
 import torch
 from torch import nn
-from torch_geometric.nn import knn_graph
-from torch_scatter import scatter_add, scatter_max, scatter_mean
-
 
 class E_GCL(nn.Module):
     """
@@ -24,7 +19,6 @@ class E_GCL(nn.Module):
         residual=True,
         attention=False,
         normalize=False,
-        coords_agg="mean",
         tanh=False,
     ):
         super(E_GCL, self).__init__()
@@ -32,7 +26,6 @@ class E_GCL(nn.Module):
         self.residual = residual
         self.attention = attention
         self.normalize = normalize
-        self.coords_agg = coords_agg
         self.tanh = tanh
         self.epsilon = 1e-8
         edge_coords_nf = 1
@@ -77,7 +70,8 @@ class E_GCL(nn.Module):
 
     def node_model(self, x, edge_index, edge_attr, node_attr):
         src, _ = edge_index
-        agg = scatter_add(edge_attr, src, dim=0)
+        agg = torch.zeros((x.shape[0], edge_attr.shape[1]), device=x.device)
+        agg = agg.index_add(0, src, edge_attr)  # (n_nodes, hidden_dim)
         if node_attr is not None:
             agg = torch.cat([x, agg, node_attr], dim=1)
         else:
@@ -90,18 +84,9 @@ class E_GCL(nn.Module):
     def coord_model(self, coord, edge_index, coord_diff, edge_feat):
         src, _ = edge_index
         trans = coord_diff * self.coord_mlp(edge_feat)  # (n_edges, 3)
-        agg = self.coords_agg(trans, src, dim=0)  # (n_nodes, 3)
+        agg = torch.zeros_like(coord, device=coord.device)
+        agg = agg.index_add(0, src, trans)  # (n_nodes, 3)
         # TODO (GAL) bug somewhere here: edge index is not correct
-        if agg.shape != coord.shape:
-            # TODO remove once figured out
-            # add padding to agg
-            agg = torch.cat(
-                [
-                    agg,
-                    torch.zeros((coord.shape[0] - agg.shape[0], 3), device=agg.device),
-                ],
-                dim=0,
-            )
         coord = coord + agg
         return coord  # (n_nodes, 3)
 
@@ -139,8 +124,6 @@ class EGNNLocal(nn.Module):
         hidden_dim=64,
         scalar_dim=1,
         edge_dim=1,
-        scalar_pooling=scatter_max,
-        vector_pooling=scatter_add,
         device="cpu",
         act_fn=nn.SiLU(),
         n_layers=4,
@@ -148,7 +131,6 @@ class EGNNLocal(nn.Module):
         residual=True,
         attention=False,
         normalize=False,
-        coords_agg=scatter_add,
         tanh=False,
         eps=1e-8,
     ):
@@ -159,8 +141,6 @@ class EGNNLocal(nn.Module):
             hidden_dim (int): Number of hidden features
             scalar_dim (int): Number of features for 'h' at the input
             edge_dim (int): Number of features for the edge features
-            scalar_pooling (str): Pooling function for the scalar features
-            vector_pooling (str): Pooling function for the vector features
             device (str): Device (e.g. 'cpu', 'cuda:0',...)
             act_fn (str): Non-linearity
             n_layers (int): Number of layers for the EGNN
@@ -177,14 +157,6 @@ class EGNNLocal(nn.Module):
         self.n_layers = n_layers
         self.n_neighbors = n_neighbors
         self.eps = eps
-
-        assert coords_agg in [scatter_add, scatter_mean]
-        assert scalar_pooling in [scatter_add, scatter_mean, scatter_max]
-        assert vector_pooling in [scatter_add, scatter_mean]
-        self.scalar_pooling = scalar_pooling
-        if self.scalar_pooling == scatter_max:
-            self.scalar_pooling = lambda *args, **kw: scatter_max(*args, **kw)[0]
-        self.vector_pooling = vector_pooling
 
         self.embedding_in = nn.Linear(scalar_dim, self.hidden_dim)
 
@@ -211,13 +183,12 @@ class EGNNLocal(nn.Module):
                     residual=residual,
                     attention=attention,
                     normalize=normalize,
-                    coords_agg=coords_agg,
                     tanh=tanh,
                 ),
             )
         self.to(self.device)
 
-    def forward(self, inputs: Tuple[torch.Tensor, torch.Tensor]):
+    def forward(self, inputs: torch.Tensor):
         """Encoder forward pass
 
         Args:
@@ -226,45 +197,62 @@ class EGNNLocal(nn.Module):
         Returns:
             Tuple with the object codes and batch indices per-node
         """
-        pc, n_nodes = inputs  # (n_nodes, 3), (bs,)
+        pc, _ = inputs  # (n_nodes, 3)
         # feature transform
-        h, x, edges, edge_attr, batch = self._transform(pc, n_nodes)
+        h, x, edges, edge_attr = self._transform(pc)
         # embedding
         h = self.embedding_in(h)  # (n_nodes, hidden_dim)
         # message passing
         for i in range(0, self.n_layers):
             h, x, _ = self._modules[f"gcl_{i}"](h, edges, x, edge_attr=edge_attr)
 
-        s_codes, v_codes = self._readout(h, x, batch)
+        s_codes, v_codes = self._readout(h, x)
         return s_codes, v_codes
 
-    def _transform(self, pc, n_nodes):
+    def _transform(self, pc):
         # edge indices (knn)
-        bs = n_nodes.shape[0]
         # batch index per node (avoid knn across graphs)
-        batch = torch.arange(0, bs, device=pc.device).repeat_interleave(n_nodes).long()
-        edges = knn_graph(pc, self.n_neighbors, batch)
+        # batch = torch.arange(0, bs, device=pc.device).repeat_interleave(n_node).long()
+        edges = knn_graph(pc, self.n_neighbors)
         # scalar node features (norms)
         h = torch.norm(pc, dim=-1, keepdim=True)
         # vector node features (coordinates)
         x = pc
         # edge features (distance)
         edge_attr = torch.norm(x[edges[0]] - x[edges[1]], dim=-1, keepdim=True)
-        return h, x, edges, edge_attr, batch
+        return h, x, edges, edge_attr
 
-    def _readout(self, h, x, batch):
-        # scalar readout
-        s_codes = self.scalar_pooling(h, batch, dim=0)  # (bs, hidden_dim)
-        v_codes = self.vector_pooling(x, batch, dim=0)  # (bs, 3)
+    def _readout(self, h, x):
+        # graph pooling
+        s_codes = h.max(0)[0]  # (hidden_dim,)
+        v_codes = x.sum(0)  # (3,)
 
         mix = self.readout_mix_net(
             torch.cat([s_codes, torch.norm(v_codes, dim=-1, keepdim=True)], dim=-1)
-        )  # (bs, c_dim + vector_c_dim)
+        )  # (c_dim + vector_c_dim)
         scalar_mix, vector_mix = torch.split(
             mix, [self.c_dim, self.vector_c_dim], dim=-1
         )
         s_codes = self.scalar_readout(s_codes) * scalar_mix  # (n_nodes, c_dim)
         # vector readout
-        v_codes = v_codes[:, None] * vector_mix[..., None]  # (n_nodes, vector_c_dim, 3)
+        v_codes = v_codes[:, None] * vector_mix[None, :]  # (n_nodes, vector_c_dim, 3)
 
         return s_codes, v_codes
+
+
+def knn_graph(x: torch.Tensor, k: int) -> torch.Tensor:
+    """Naive k-nearest neighbor graph for a set of points.
+
+    Args:
+        x (torch.Tensor): Points
+        k (int): Number of neighbors
+
+    Returns:
+        torch.Tensor: Edge indices
+    """
+    d = torch.cdist(x, x)
+    _, src = torch.topk(d, k, dim=1, largest=False)
+    src = src.flatten()
+    dst = torch.arange(0, x.shape[0], device=x.device).repeat_interleave(k)
+    indices = torch.stack([src, dst], dim=0)
+    return indices

@@ -40,34 +40,23 @@ class E3Decoder(nn.Module):
         self.readout = nn.Linear(hidden_size, 1)
 
     def forward(self, p, code, **kwargs):
-        bs, n_sample_points, _ = p.shape
+        n_sample_points, _ = p.shape
         scalar_c, vector_c = code
-        assert scalar_c.shape[0] == vector_c.shape[0] == bs
-        scalar_c = scalar_c.view(bs, self.c_dim).contiguous()
-        vector_c = vector_c.view(bs, self.vector_c_dim, 3).contiguous()
+        vector_c = vector_c.view(self.vector_c_dim, 3).contiguous()
 
-        # TODO not sure what's going on here
-        p2 = torch.sum(p * p, dim=2, keepdim=True)  # (bs, n_sample_points, 1)
-        x_code = torch.einsum(
-            "bmd,bnd->bmn", p, vector_c
-        )  # (bs, n_sample_points, vector_c_dim)
-        inv_code = torch.sum(
-            scalar_c * self.scalar_mix_in(scalar_c), dim=-1, keepdim=True
-        )
-        inv_code = inv_code.repeat(1, n_sample_points).unsqueeze(
-            -1
-        )  # (bs, n_sample_points, 1)
-        x = torch.cat(
-            [p2, x_code, inv_code], dim=-1
-        )  # (bs, n_sample_points, vector_c_dim + 1 + 1)
+        p2 = torch.sum(p * p, dim=1, keepdim=True)  # (n_sample, 1)
+        x_code = torch.einsum("md,nd->mn", p, vector_c)  # (n_sample, vector_c_dim)
+        inv_code = torch.sum(scalar_c * self.scalar_mix_in(scalar_c))
+        inv_code = inv_code.repeat(n_sample_points).unsqueeze(-1)  # (n_sample, 1)
+        x = torch.cat([p2, x_code, inv_code], dim=-1)  # (n_sample, vec_c_dim + 1 + 1)
 
         # sample point embedding
-        x = self.point_emb(x)  # (bs, n_sample_points, hidden_size)
+        x = self.point_emb(x)  # (n_sample, hidden_size)
 
         # resnet blocks
         for i in range(0, self.n_blocks):
             x = self._modules[f"block_{i}"](x)
 
         # probability readout
-        occ = self.readout(F.silu(x)).squeeze(-1)  # (bs, n_sample_points)
+        occ = self.readout(F.silu(x)).squeeze(-1)  # (n_sample,)
         return occ

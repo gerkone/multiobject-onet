@@ -161,7 +161,7 @@ def get_generator(model, cfg, device, **kwargs):
 
     generator = generation.MultiObjectGenerator3D(
         model,
-        scene_builder=scene_builder.SceneBuilder(model.scene_builder_metadata),
+        scene_builder=scene_builder.SceneBuilder(),
         device=device,
         threshold=cfg["test"]["threshold"],
         resolution0=cfg["generation"]["resolution_0"],

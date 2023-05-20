@@ -4,9 +4,9 @@ class SceneBuilder:
     Denormalize and shift local frames to scene frame.
     """
 
-    def __init__(self, metadata):
-        self.metadata = metadata
+    def __init__(self):
+        pass
 
-    def __call__(self, meshes):
+    def __call__(self, meshes, scene_metadata):
         # TODO
         raise NotImplementedError
