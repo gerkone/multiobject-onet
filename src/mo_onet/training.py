@@ -7,8 +7,6 @@ from src.common import add_key, compute_iou, make_3d_grid
 from src.mo_onet.utils import crop_occupancy_grid
 from src.training import BaseTrainer
 
-# TODO
-
 
 class Trainer(BaseTrainer):
     """Trainer object for the multi-object Occupancy Network.
@@ -54,10 +52,14 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
+        # TODO ensure same number of objects per batch
         # vmap over batch size
-        loss = torch.vmap(self.compute_loss, randomness="same")(data).mean()
-        # TODO (GAL) debugging only
-        # loss = self.compute_loss({k: v[0] for k, v in data.items()})
+        n_obj = data["object_tag"].max().item() + 1
+        # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
+        #     data, n_obj
+        # ).mean()
+        # NOTE debug only
+        loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
         loss.backward()
         self.optimizer.step()
 
@@ -131,7 +133,7 @@ class Trainer(BaseTrainer):
 
         return eval_dict
 
-    def compute_loss(self, data):
+    def compute_loss(self, data, n_obj):
         """Computes the loss.
 
         Args:
@@ -141,9 +143,7 @@ class Trainer(BaseTrainer):
         p = data.get("points").to(device)
         occ = data.get("points.occ").to(device)  # (n_points,)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        # TODO (NINA) where to get seg_target from?
-        # seg_target = data.get("seg_target").to(device)
-        seg_target = torch.randint(0, 4, (inputs.shape[0],)).to(device)
+        seg_target = data.get("object_tag").to(device)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -155,29 +155,24 @@ class Trainer(BaseTrainer):
             p = add_key(p, data.get("points.normalized"), "p", "p_n", device=device)
 
         # segment and split objects
-        # TODO ground truth segmentation
+        # TODO real instance segmentation
+        # node_tag, _ = self.model.segment_to_single_graphs(inputs)
         node_tag = seg_target
-        segmented_objects = self.model._split_object_instances(inputs, node_tag)
+
         # encoder
-        codes = self.model.encode_multi_object(segmented_objects)
+        codes = self.model.encode_multi_object(inputs, node_tag, n_obj)
 
-        kwargs = {}
+        # TODO (GAL) crop sample grid
+        p_crop = torch.stack([p] * n_obj)
 
-        # TODO (GAL) find a way around dynamic indexing for cropping occupancy grid
-        # p_crop, occ_crop, _ = crop_occupancy_grid(
-        #     p, occ, segmented_objects
-        # )  # list n_obj (n_points_per_obj,)
-        p_crop = [p] * len(codes)
-        occ_crop = [occ] * len(codes)
+        pred_occ = self.model.decode_multi_object(p_crop, codes)  # (total_n_points,)
 
-        pred_occ = self.model.decode_multi_object(
-            p_crop, codes, logits=True, **kwargs
-        )  # list n_obj (n_points_per_obj,)
-        pred_occ = torch.cat([out for out in pred_occ])  # (total_n_points,)
-        occ_crop = torch.cat(occ_crop)  # (total_n_points,)
+        # occ_mask = crop_occupancy_grid(
+        #     p, inputs, occ, node_tag, n_obj
+        # )  # (n_obj, n_points_per_obj)
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, occ_crop, reduction="none"
+            pred_occ, occ, reduction="none"
         ).mean()
 
         total_loss = scene_reconstruction_loss

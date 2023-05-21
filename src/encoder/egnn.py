@@ -20,14 +20,12 @@ class E_GCL(nn.Module):
         residual=True,
         attention=False,
         normalize=False,
-        tanh=False,
     ):
         super(E_GCL, self).__init__()
         input_edge = input_nf * 2
         self.residual = residual
         self.attention = attention
         self.normalize = normalize
-        self.tanh = tanh
         self.epsilon = 1e-8
         edge_coords_nf = 1
 
@@ -51,8 +49,6 @@ class E_GCL(nn.Module):
         coord_mlp.append(nn.Linear(hidden_dim, hidden_dim))
         coord_mlp.append(act_fn)
         coord_mlp.append(layer)
-        if self.tanh:
-            coord_mlp.append(nn.Tanh())
         self.coord_mlp = nn.Sequential(*coord_mlp)
 
         if self.attention:
@@ -87,7 +83,7 @@ class E_GCL(nn.Module):
         trans = coord_diff * self.coord_mlp(edge_feat)  # (n_edges, 3)
         agg = torch.zeros_like(coord, device=coord.device)
         agg = agg.index_add(0, src, trans)  # (n_nodes, 3)
-        # TODO (GAL) bug somewhere here: edge index is not correct
+        # TODO (GAL) bug somewhere: edge index is not always correct
         coord = coord + agg
         return coord  # (n_nodes, 3)
 
@@ -127,12 +123,11 @@ class EGNNLocal(nn.Module):
         edge_dim=1,
         device="cpu",
         act_fn=nn.SiLU(),
-        n_layers=4,
+        n_layers=3,
         n_neighbors=5,
         residual=True,
         attention=False,
-        normalize=False,
-        tanh=False,
+        normalize=True,
         eps=1e-8,
     ):
         """
@@ -148,8 +143,7 @@ class EGNNLocal(nn.Module):
             n_neighbors (int): Number of neighbors to consider in the knn graph
             residual (bool): Use residual connections, we recommend not changing this one
             attention (bool): Whether using attention or not
-            normalize (bool): Normalizes the coordinate messages such that:
-            tanh (bool): Sets a tanh activation function at the output of phi_x(m_ij).
+            normalize (bool): Normalizes the coordinate messages.
             eps (float): Small number to avoid numerical instabilities
         """
         super().__init__()
@@ -170,6 +164,7 @@ class EGNNLocal(nn.Module):
             nn.Linear(self.hidden_dim + 1, self.hidden_dim),
             act_fn,
             nn.Linear(self.hidden_dim, c_dim + vector_c_dim),
+            nn.Tanh(),
         )
 
         for i in range(0, n_layers):
@@ -184,37 +179,35 @@ class EGNNLocal(nn.Module):
                     residual=residual,
                     attention=attention,
                     normalize=normalize,
-                    tanh=tanh,
                 ),
             )
         self.to(self.device)
 
-    def forward(self, inputs: torch.Tensor):
+    def forward(self, pc: torch.Tensor, node_tag: torch.Tensor, n_obj: int = None):
         """Encoder forward pass
 
         Args:
-            inputs (tuple): point cloud and number of nodes per graph
+            inputs (torch.Tensor): point cloud (n_nodes, 3)
+            node_tag (torch.Tensor): node-wise instance tag (n_nodes,)
 
         Returns:
             Tuple with the object codes and batch indices per-node
         """
-        pc, _ = inputs  # (n_nodes, 3)
         # feature transform
-        h, x, edges, edge_attr = self._transform(pc)
+        h, x, edges, edge_attr = self._transform(pc, node_tag)
         # embedding
         h = self.embedding_in(h)  # (n_nodes, hidden_dim)
         # message passing
         for i in range(0, self.n_layers):
             h, x, _ = self._modules[f"gcl_{i}"](h, edges, x, edge_attr=edge_attr)
 
-        s_codes, v_codes = self._readout(h, x)
+        s_codes, v_codes = self._readout(h, x, node_tag, n_obj)
         return s_codes, v_codes
 
-    def _transform(self, pc):
+    def _transform(self, pc, node_tag):
         # edge indices (knn)
         # batch index per node (avoid knn across graphs)
-        # batch = torch.arange(0, bs, device=pc.device).repeat_interleave(n_node).long()
-        edges = knn_graph(pc, self.n_neighbors)
+        edges = knn_graph(pc, self.n_neighbors, node_tag)
         # scalar node features (norms)
         h = torch.norm(pc, dim=-1, keepdim=True)
         # vector node features (coordinates)
@@ -223,10 +216,15 @@ class EGNNLocal(nn.Module):
         edge_attr = torch.norm(x[edges[0]] - x[edges[1]], dim=-1, keepdim=True)
         return h, x, edges, edge_attr
 
-    def _readout(self, h, x):
+    def _readout(self, h, x, node_tag, n_obj=None):
         # graph pooling
-        s_codes = h.max(0)[0]  # (hidden_dim,)
-        v_codes = x.sum(0)  # (3,)
+        node_tag = node_tag.long()
+        # TODO (GAL) vmap does not support data-dependent flow yet
+        #  workaround could be to use the same number of objects per batch when training
+        if not self.training:
+            n_obj = node_tag.unique().shape[0]
+        s_codes = scatter(h, node_tag, n_obj, "max")  # (n_objects, hidden_dim)
+        v_codes = scatter(x, node_tag, n_obj, "mean")  # (n_objects, 3)
 
         mix = self.readout_mix_net(
             torch.cat([s_codes, torch.norm(v_codes, dim=-1, keepdim=True)], dim=-1)
@@ -236,24 +234,45 @@ class EGNNLocal(nn.Module):
         )
         s_codes = self.scalar_readout(s_codes) * scalar_mix  # (n_nodes, c_dim)
         # vector readout
-        v_codes = v_codes[:, None] * vector_mix[None, :]  # (n_nodes, vector_c_dim, 3)
+        v_codes = v_codes[:, None] * vector_mix[..., None]  # (n_nodes, vector_c_dim, 3)
 
         return s_codes, v_codes
 
 
-def knn_graph(x: torch.Tensor, k: int) -> torch.Tensor:
+def knn_graph(x: torch.Tensor, k: int, batch: torch.Tensor) -> torch.Tensor:
     """Naive k-nearest neighbor graph for a set of points.
 
     Args:
-        x (torch.Tensor): Points
+        x (torch.Tensor): Input points (num_points, 3)
+        batch (torch.Tensor): Tensor assigning each point to a batch (num_points,)
         k (int): Number of neighbors
 
     Returns:
-        torch.Tensor: Edge indices
+        torch.Tensor: Edge indices with shape (2, num_points * k)
     """
+    num_points = x.shape[0]
+    # naive: compute all pairwise distances
     d = torch.cdist(x, x)
+    # exclude self from neighbors
+    d = d.fill_diagonal_(torch.inf)
+    # exclude points outside batch
+    d = torch.where(batch[:, None] == batch[None, :], d, torch.inf)
     _, src = torch.topk(d, k, dim=1, largest=False)
-    src = src.flatten()
-    dst = torch.arange(0, x.shape[0], device=x.device).repeat_interleave(k)
-    indices = torch.stack([src, dst], dim=0)
-    return indices
+    src = src.reshape(-1)
+    dst = torch.arange(num_points, device=x.device).repeat_interleave(k)
+    return torch.stack([src, dst], dim=0)
+
+
+def scatter(
+    data: torch.Tensor,
+    segment_ids: torch.Tensor,
+    num_segments: int,
+    reduce: str = "sum",
+):
+    # reduce in ["sum", "prod", "mean", "max", "min"]
+    result_shape = (num_segments, data.size(1))
+    result = data.new_full(result_shape, 0)  # Init empty result tensor.
+    segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
+    result.scatter_add_(0, segment_ids, data)
+    result.scatter_reduce(0, segment_ids, data, reduce)
+    return result

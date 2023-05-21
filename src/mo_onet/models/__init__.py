@@ -2,14 +2,10 @@ import torch
 import torch.nn as nn
 from torch import distributions as dist
 
-from src.conv_onet.models import decoder as onetdecoder
 from src.mo_onet.models import decoder, segmenter
 
 decoder_dict = {
-    "equi_mlp": decoder.E3Decoder,
-    "simple_local": onetdecoder.LocalDecoder,
-    "simple_local_crop": onetdecoder.PatchLocalDecoder,
-    "simple_local_point": onetdecoder.LocalPointDecoder,
+    "e3_decoder": decoder.E3Decoder,
 }
 
 segmenter_dict = {
@@ -60,17 +56,18 @@ class MultiObjectONet(nn.Module):
             codes (list): list of latent conditioned codes
             scene_metadata (dict): scene metadata for scene building
         """
-        segmented_objects, scene_metadata = self.segment_to_single_graphs(pc)
-        return self.encode_multi_object(segmented_objects), scene_metadata
+        node_tag, scene_metadata = self.segment_to_single_graphs(pc)
+        return self.encode_multi_object(node_tag), scene_metadata
 
-    def encode_multi_object(self, segmented_objects):
+    def encode_multi_object(self, pc, node_tag, n_obj=None):
         """Encodes the input.
 
         Args:
-            segmented_objects (tensor): list of single object point clouds
+            pc (tensor): the input point cloud (n_points, 3)
+            node_tag (tensor): the node-wise instance tag (n_points)
+            n_obj (int): number of objects in the scene
         """
-        # TODO (GAL) batched
-        return [self.encoder(obj) for obj in segmented_objects]
+        return self.encoder(pc, node_tag, n_obj)
 
     def segment_to_single_graphs(self, pc):
         """Segments the input point cloud into single shapes.
@@ -78,16 +75,14 @@ class MultiObjectONet(nn.Module):
         Args:
             pc (tensor): the input point cloud (n_points, 3)
         Returns:
-            segmented_objects (list): list of single object point clouds
+            node_tag (tensor): the node-wise instance tag (n_points,)
             scene_metadata (dict): scene metadata for scene building
         """
         node_tags, _ = self.segmenter(pc)
         scene_metadata = self.build_scene_metadata(node_tags)
-        # split graphs on node_tag
-        segmented_objects = self._split_object_instances(pc, node_tags)
-        return segmented_objects, scene_metadata
+        return node_tags, scene_metadata
 
-    def decode_multi_object(self, q, codes, logits=True, **kwargs):
+    def decode_multi_object(self, q, codes, **kwargs):
         """Returns full scene occupancy probabilities for the sampled points.
 
         Args:
@@ -96,27 +91,14 @@ class MultiObjectONet(nn.Module):
         Returns:
             p_r (list): list of occupancy probs
         """
-        # TODO (GAL) batched
+        assert len(q) == len(codes[0]) == len(codes[1])
         # TODO should operate everywhere in unit cube right?
-        assert len(q) == len(codes)
-        n_obj = len(q)
-        return [
-            self.decode_single_object(q[i], codes[i], logits, **kwargs)
-            for i in range(n_obj)
-        ]
-
-    def decode_single_object(self, q, c, logits=True, **kwargs):
-        """Returns single object occupancy probabilities for the sampled points.
-
-        Args:
-            p (tensor): points (n_sample_points, 3)
-            c (tensor): latent conditioned code c
-        Returns:
-            p_r (tensor): occupancy probs (n_sample_points,)
-        """
-        if logits:
-            return self.decoder(q, c, **kwargs)
-        return dist.Bernoulli(logits=logits)
+        logits = self.decoder(q, codes, **kwargs)  # (n_obj, n_sample_points)
+        # sum over objects
+        logits = torch.sum(logits, dim=0)  # (n_sample_points,)
+        # if self.training:
+        #     return logits
+        return dist.Bernoulli(logits=logits).logits
 
     def build_scene_metadata(self, node_tag):
         """Builds scene metadata for scene building.
@@ -134,20 +116,3 @@ class MultiObjectONet(nn.Module):
             "barycenters": None,
             "normalization_params": None,
         }
-
-    def _split_object_instances(self, pc, node_tag):
-        """Splits the input point cloud into multiple graphs depending on the node tag.
-
-        Args:
-            pc (tensor): input point cloud (n_points, 3)
-            node_tag (tensor): node integer tag (n_points,)
-        Returns:
-            graphs (list): list of graphs for each single object
-        """
-        graphs = []
-        # TODO how is the node tag encoded?
-        for tag in node_tag.unique():
-            tag_mask = node_tag == tag
-            n_nodes = tag_mask.sum(-1)
-            graphs.append((pc[tag_mask], n_nodes))
-        return graphs
