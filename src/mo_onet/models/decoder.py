@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.layers import ResnetBlockFC
+from src.layers import CBatchNorm1d, CResnetBlockConv1d, ResnetBlockFC
 
 
 class E3Decoder(nn.Module):
@@ -34,7 +34,6 @@ class E3Decoder(nn.Module):
         self.n_blocks = n_blocks
 
         for i in range(0, n_blocks):
-            # TODO add conditional batch norm
             self.add_module(f"block_{i}", ResnetBlockFC(hidden_size))
 
         self.readout = nn.Linear(hidden_size, 1)
@@ -68,3 +67,43 @@ class E3Decoder(nn.Module):
         # logit readout
         occ = self.readout(F.silu(x)).squeeze(-1)  # (o_obj, n_sample)
         return occ
+
+
+class DecoderCBatchNorm(nn.Module):
+    """Decoder with conditional batch normalization (CBN) class.
+
+    Args:
+        dim (int): input dimension
+        c_dim (int): dimension of latent conditioned code c
+        hidden_size (int): hidden size of Decoder network
+        leaky (bool): whether to use leaky ReLUs
+    """
+
+    def __init__(self, c_dim=128, n_blocks=4, hidden_size=64):
+        super().__init__()
+
+        self.n_blocks = n_blocks
+
+        self.fc_p = nn.Conv1d(3, hidden_size, 1)
+
+        for i in range(0, n_blocks):
+            self.add_module(f"block_{i}", CResnetBlockConv1d(c_dim, hidden_size))
+
+        self.bn = CBatchNorm1d(c_dim, hidden_size)
+
+        self.fc_out = nn.Conv1d(hidden_size, 1, 1)
+
+        self.actvn = F.relu
+
+    def forward(self, p, code, **kwargs):
+        code = code[0]
+        p = p.transpose(1, 2)
+        net = self.fc_p(p)
+
+        for i in range(0, self.n_blocks):
+            net = self._modules[f"block_{i}"](net, code)
+
+        out = self.fc_out(self.actvn(self.bn(net, code)))
+        out = out.squeeze(1)
+
+        return out

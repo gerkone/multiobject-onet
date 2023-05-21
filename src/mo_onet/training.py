@@ -55,11 +55,11 @@ class Trainer(BaseTrainer):
         # TODO ensure same number of objects per batch
         # vmap over batch size
         n_obj = data["object_tag"].max().item() + 1
-        # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
-        #     data, n_obj
-        # ).mean()
+        loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
+            data, n_obj
+        ).mean()
         # NOTE debug only
-        loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
+        # loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
         loss.backward()
         self.optimizer.step()
 
@@ -172,8 +172,8 @@ class Trainer(BaseTrainer):
         # )  # (n_obj, n_points_per_obj)
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, occ, reduction="none"
-        ).mean()
+            pred_occ, occ, reduction="mean"
+        )
 
         total_loss = scene_reconstruction_loss
 

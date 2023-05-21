@@ -155,13 +155,14 @@ if __name__ == "__main__":
             it += 1
             loss = trainer.train_step(batch)
             logger.add_scalar("train/loss", loss, it)
-            print(f"it: {it}, loss: {loss:.2f}")
+            print(f"it: {it}, loss: {loss:.4f}")
 
             # Print output
             if print_every > 0 and (it % print_every) == 0:
                 t = datetime.datetime.now()
                 print(
-                    f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, time: {time.time() - t0:.2f}s, {t.hour}:{t.minute}"
+                    f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, "
+                    f"time: {time.time() - t0:.2f}s, {t.hour}:{t.minute}"
                 )
 
             # TODO put back in

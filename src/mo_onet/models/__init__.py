@@ -6,6 +6,7 @@ from src.mo_onet.models import decoder, segmenter
 
 decoder_dict = {
     "e3_decoder": decoder.E3Decoder,
+    "cbn_decoder": decoder.DecoderCBatchNorm,
 }
 
 segmenter_dict = {
@@ -96,9 +97,9 @@ class MultiObjectONet(nn.Module):
         logits = self.decoder(q, codes, **kwargs)  # (n_obj, n_sample_points)
         # sum over objects
         logits = torch.sum(logits, dim=0)  # (n_sample_points,)
-        # if self.training:
-        #     return logits
-        return dist.Bernoulli(logits=logits).logits
+        if self.training:
+            return logits
+        return dist.Bernoulli(logits=logits)
 
     def build_scene_metadata(self, node_tag):
         """Builds scene metadata for scene building.
