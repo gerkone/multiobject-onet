@@ -129,9 +129,11 @@ def get_dataset(mode, cfg, return_idx=False):
         # Method specific fields (usually correspond to output)
         fields = method_dict[method].config.get_data_fields(mode, cfg)
         # Input fields
-        inputs_field = get_inputs_field(mode, cfg)
+        inputs_field, seg_field = get_inputs_field(mode, cfg)
         if inputs_field is not None:
             fields["inputs"] = inputs_field
+        if seg_field is not None:
+            fields["object_tag"] = seg_field
 
         if return_idx:
             fields["idx"] = data.IndexField()
@@ -153,6 +155,7 @@ def get_inputs_field(mode, cfg):
         cfg (dict): config dictionary
     """
     input_type = cfg["data"]["input_type"]
+    multi_object = cfg["method"] == "mo_onet"
 
     if input_type is None:
         inputs_field = None
@@ -200,4 +203,10 @@ def get_inputs_field(mode, cfg):
         inputs_field = data.IndexField()
     else:
         raise ValueError("Invalid input type (%s)" % input_type)
-    return inputs_field
+
+    seg_field = None
+
+    if multi_object:
+        seg_field = data.ObjectTagField(inputs_field, cfg["data"]["item_file"])
+
+    return inputs_field, seg_field

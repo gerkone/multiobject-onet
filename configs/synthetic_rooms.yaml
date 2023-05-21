@@ -3,27 +3,28 @@ data:
   input_type: pointcloud
   classes: ["rooms_04"] # , "rooms_05", "rooms_06", "rooms_07", "rooms_08"]
   path: /local/disk1/gg/data/synthetic_0405
-  pointcloud_n: 500 # 5000 is probably a reasonable number for real training
+  pointcloud_n: 2000 # 5000 is probably a reasonable number for real training
   pointcloud_noise: 0.005
   points_subsample: 1024 # 2048
   points_file: points_iou
+  item_file: item_dict
   points_iou_file: points_iou
   pointcloud_file: pointcloud
   pointcloud_chamfer_file: pointcloud
   multi_files: 10
   voxels_file: null
 model:
-  decoder: equi_mlp
+  decoder: e3_decoder
   encoder: egnn
   segmenter: segmenter # TODO
   decoder_kwargs: {}
   segmenter_kwargs: {}
-  encoder_kwargs: {"hidden_dim": 64, "n_layers": 3, "n_neighbors": 5} # TODO pretrained
+  encoder_kwargs: {"hidden_dim": 64, "n_layers": 3, "n_neighbors": 5}
   multi_gpu: False
   c_dim: 128
 training:
   out_dir:  out/default
-  batch_size: 16
+  batch_size: 32
   print_every: 200
   visualize_every: 1000
   checkpoint_every: 1000

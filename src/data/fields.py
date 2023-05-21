@@ -4,6 +4,7 @@ import random
 
 import numpy as np
 from PIL import Image
+from sklearn.cluster import KMeans
 
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
@@ -162,6 +163,33 @@ class PointsField(Field):
             data = self.transform(data)
 
         return data
+
+
+class ObjectTagField(Field):
+    """Segmentation object tag field."""
+
+    def __init__(self, point_field, file_name):
+        self.point_field = point_field
+        self.file_name = file_name
+
+    def load(self, model_path, idx, category):
+        """Loads the data point.
+
+        Args:
+            model_path (str): path to model
+            idx (int): ID of data point
+            category (int): index of category
+        """
+        file_path = os.path.join(model_path, f"{self.file_name}.npz")
+
+        item_dict = np.load(file_path)
+        obj_ids = item_dict["objects"]
+
+        # kmeans over objects
+        # TODO avoid reloading
+        points = self.point_field.load(model_path, idx, category)[None]
+
+        return KMeans(n_clusters=len(obj_ids), n_init="auto").fit_predict(points)
 
 
 class VoxelsField(Field):

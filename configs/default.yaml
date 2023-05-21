@@ -9,6 +9,7 @@ data:
   test_split: test
   dim: 3
   points_file: points.npz
+  item_file: item_dict.npz
   points_iou_file: points.npz
   multi_files: null
   points_subsample: 1024

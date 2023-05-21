@@ -116,7 +116,7 @@ if __name__ == "__main__":
     generator = config.get_generator(model, cfg, device=device)
 
     # Intialize training
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=5e-4)
     # optimizer = optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
     trainer = config.get_trainer(model, optimizer, cfg, device=device)
 
@@ -155,12 +155,13 @@ if __name__ == "__main__":
             it += 1
             loss = trainer.train_step(batch)
             logger.add_scalar("train/loss", loss, it)
+            print(f"it: {it}, loss: {loss:.2f}")
 
             # Print output
             if print_every > 0 and (it % print_every) == 0:
                 t = datetime.datetime.now()
                 print(
-                    f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, time: {time.time() - t0}, {t.hour}:{t.minute}"
+                    f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, time: {time.time() - t0:.2f}s, {t.hour}:{t.minute}"
                 )
 
             # TODO put back in
@@ -186,45 +187,45 @@ if __name__ == "__main__":
             #             )
             #         )
 
-            # Save checkpoint
-            if checkpoint_every > 0 and (it % checkpoint_every) == 0:
-                print("Saving checkpoint")
-                checkpoint_io.save(
-                    "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
-                )
+            # # Save checkpoint
+            # if checkpoint_every > 0 and (it % checkpoint_every) == 0:
+            #     print("Saving checkpoint")
+            #     checkpoint_io.save(
+            #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
+            #     )
 
-            # Backup if necessary
-            if backup_every > 0 and (it % backup_every) == 0:
-                print("Backup checkpoint")
-                checkpoint_io.save(
-                    "model_%d.pt" % it,
-                    epoch_it=epoch_it,
-                    it=it,
-                    loss_val_best=metric_val_best,
-                )
-            # Run validation
-            if validate_every > 0 and (it % validate_every) == 0:
-                eval_dict = trainer.evaluate(val_loader)
-                metric_val = eval_dict[model_selection_metric]
-                print(f"Validation metric ({model_selection_metric}): {metric_val}")
+            # # Backup if necessary
+            # if backup_every > 0 and (it % backup_every) == 0:
+            #     print("Backup checkpoint")
+            #     checkpoint_io.save(
+            #         "model_%d.pt" % it,
+            #         epoch_it=epoch_it,
+            #         it=it,
+            #         loss_val_best=metric_val_best,
+            #     )
+            # # Run validation
+            # if validate_every > 0 and (it % validate_every) == 0:
+            #     eval_dict = trainer.evaluate(val_loader)
+            #     metric_val = eval_dict[model_selection_metric]
+            #     print(f"Validation metric ({model_selection_metric}): {metric_val}")
 
-                for k, v in eval_dict.items():
-                    logger.add_scalar("val/%s" % k, v, it)
+            #     for k, v in eval_dict.items():
+            #         logger.add_scalar("val/%s" % k, v, it)
 
-                if model_selection_sign * (metric_val - metric_val_best) > 0:
-                    metric_val_best = metric_val
-                    print("New best model (loss {metric_val_best})")
-                    checkpoint_io.save(
-                        "model_best.pt",
-                        epoch_it=epoch_it,
-                        it=it,
-                        loss_val_best=metric_val_best,
-                    )
+            #     if model_selection_sign * (metric_val - metric_val_best) > 0:
+            #         metric_val_best = metric_val
+            #         print("New best model (loss {metric_val_best})")
+            #         checkpoint_io.save(
+            #             "model_best.pt",
+            #             epoch_it=epoch_it,
+            #             it=it,
+            #             loss_val_best=metric_val_best,
+            #         )
 
-            # Exit if necessary
-            if exit_after > 0 and (time.time() - t0) >= exit_after:
-                print("Time limit reached. Exiting.")
-                checkpoint_io.save(
-                    "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
-                )
-                exit(3)
+            # # Exit if necessary
+            # if exit_after > 0 and (time.time() - t0) >= exit_after:
+            #     print("Time limit reached. Exiting.")
+            #     checkpoint_io.save(
+            #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
+            #     )
+            #     exit(3)
