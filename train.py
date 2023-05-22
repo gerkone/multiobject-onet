@@ -16,6 +16,11 @@ from collections import defaultdict
 from src import config, data
 from src.checkpoints import CheckpointIO
 
+# TODO for now
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
 if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser(description="Train a 3D reconstruction model.")
@@ -116,7 +121,7 @@ if __name__ == "__main__":
     generator = config.get_generator(model, cfg, device=device)
 
     # Intialize training
-    optimizer = optim.Adam(model.parameters(), lr=5e-4)
+    optimizer = optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
     # optimizer = optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
     trainer = config.get_trainer(model, optimizer, cfg, device=device)
 
@@ -152,10 +157,11 @@ if __name__ == "__main__":
         epoch_it += 1
 
         for batch in train_loader:
-            it += 1
-            loss = trainer.train_step(batch)
-            logger.add_scalar("train/loss", loss, it)
-            print(f"it: {it}, loss: {loss:.4f}")
+            while True:
+                it += 1
+                loss = trainer.train_step(batch)
+                logger.add_scalar("train/loss", loss, it)
+                print(f"it: {it}, loss: {loss:.4f}")
 
             # Print output
             if print_every > 0 and (it % print_every) == 0:

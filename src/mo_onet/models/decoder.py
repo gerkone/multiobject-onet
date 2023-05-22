@@ -96,7 +96,8 @@ class DecoderCBatchNorm(nn.Module):
         self.actvn = F.relu
 
     def forward(self, p, code, **kwargs):
-        code = code[0]
+        if isinstance(code, tuple):
+            code = code[0]
         p = p.transpose(1, 2)
         net = self.fc_p(p)
 

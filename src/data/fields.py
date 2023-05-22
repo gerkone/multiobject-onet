@@ -192,7 +192,11 @@ class ObjectTagField(Field):
         # import torch
         # return torch.zeros(points.shape[0], dtype=torch.long)
 
-        return KMeans(n_clusters=len(obj_ids), n_init="auto").fit_predict(points)
+        return (
+            KMeans(n_clusters=len(obj_ids), n_init="auto")
+            .fit_predict(points)
+            .astype(np.int64)
+        )
 
 
 class VoxelsField(Field):

@@ -68,6 +68,7 @@ class MultiObjectONet(nn.Module):
             node_tag (tensor): the node-wise instance tag (n_points)
             n_obj (int): number of objects in the scene
         """
+        pc = pc.unsqueeze(0)
         return self.encoder(pc, node_tag, n_obj)
 
     def segment_to_single_graphs(self, pc):
@@ -92,7 +93,6 @@ class MultiObjectONet(nn.Module):
         Returns:
             p_r (list): list of occupancy probs
         """
-        assert len(q) == len(codes[0]) == len(codes[1])
         # TODO should operate everywhere in unit cube right?
         logits = self.decoder(q, codes, **kwargs)  # (n_obj, n_sample_points)
         # sum over objects
@@ -109,7 +109,7 @@ class MultiObjectONet(nn.Module):
 
         Returns:
             scene_metadata (dict): a Dict containing number of objects, barycenters
-                                positions and normalization params.
+                positions and normalization params.
         """
         # TODO get scene builder metadata from node_tag and pc
         return {

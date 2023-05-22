@@ -254,10 +254,11 @@ def normalize_coordinate(p, padding=0.1, plane="xz"):
     xy_new = xy_new + 0.5  # range (0, 1)
 
     # f there are outliers out of the range
-    if xy_new.max() >= 1:
-        xy_new[xy_new >= 1] = 1 - 10e-6
-    if xy_new.min() < 0:
-        xy_new[xy_new < 0] = 0.0
+    xy_new = torch.clamp(xy_new, 0.0, 1.0 - 10e-6)
+    # if xy_new.max() >= 1:
+    #     xy_new[xy_new >= 1] = 1 - 10e-6
+    # if xy_new.min() < 0:
+    #     xy_new[xy_new < 0] = 0.0
     return xy_new
 
 
@@ -273,10 +274,11 @@ def normalize_3d_coordinate(p, padding=0.1):
     p_nor = p / (1 + padding + 10e-4)  # (-0.5, 0.5)
     p_nor = p_nor + 0.5  # range (0, 1)
     # f there are outliers out of the range
-    if p_nor.max() >= 1:
-        p_nor[p_nor >= 1] = 1 - 10e-4
-    if p_nor.min() < 0:
-        p_nor[p_nor < 0] = 0.0
+    p_nor = torch.clamp(p_nor, 0.0, 1.0 - 10e-4)
+    # if p_nor.max() >= 1:
+    #     p_nor[p_nor >= 1] = 1 - 10e-4
+    # if p_nor.min() < 0:
+    #     p_nor[p_nor < 0] = 0.0
     return p_nor
 
 
@@ -312,6 +314,7 @@ def coordinate2index(x, reso, coord_type="2d"):
         reso (int): defined resolution
         coord_type (str): coordinate type
     """
+    # TODO (GAL) support multiobject here
     x = (x * reso).long()
     if coord_type == "2d":  # plane
         index = x[:, :, 0] + reso * x[:, :, 1]

@@ -4,7 +4,6 @@ import torch
 from torch.nn import functional as F
 
 from src.common import add_key, compute_iou, make_3d_grid
-from src.mo_onet.utils import crop_occupancy_grid
 from src.training import BaseTrainer
 
 
@@ -54,12 +53,15 @@ class Trainer(BaseTrainer):
 
         # TODO ensure same number of objects per batch
         # vmap over batch size
+        # TODO (GAL) vmap is very slow right now. Try to go back to batching
         n_obj = data["object_tag"].max().item() + 1
         loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
             data, n_obj
         ).mean()
+        if loss < 0.005:
+            self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
         # NOTE debug only
-        # loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
+        # loss = sum(self.compute_loss({k: v[i] for k, v in data.items()}, n_obj) for i in range(n_obj)) / n_obj
         loss.backward()
         self.optimizer.step()
 
