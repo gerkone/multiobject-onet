@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from torch import distributions as dist
+from torch.distributions.utils import probs_to_logits, logits_to_probs
+
 
 from src.mo_onet.models import decoder, segmenter
 
@@ -84,22 +86,26 @@ class MultiObjectONet(nn.Module):
         scene_metadata = self.build_scene_metadata(node_tags)
         return node_tags, scene_metadata
 
-    def decode_multi_object(self, q, codes, **kwargs):
+    def decode_multi_object(self, p, codes, **kwargs):
         """Returns full scene occupancy probabilities for the sampled points.
 
         Args:
-            q (tensor): (list of object-wise) points (n_sample_points, 3)
-            codes (tensor): (list of object-wise) latent object code c
+            p (tensor): sample points (n_sample_points, 3)
+            codes (tensor): object-wise latent object code (n_obj, c_dim)
         Returns:
-            p_r (list): list of occupancy probs
+            p_r (tensor): scene occupancy probs
         """
         # TODO should operate everywhere in unit cube right?
-        logits = self.decoder(q, codes, **kwargs)  # (n_obj, n_sample_points)
-        # sum over objects
-        logits = torch.sum(logits, dim=0)  # (n_sample_points,)
+        logits = self.decoder(p, codes, **kwargs)  # (n_obj, n_sample_points)
+        # sum over objects in prob space
+        # probs = logits_to_probs(logits, is_binary=True)
+        # total_probs = torch.sum(probs, dim=0)  # (n_sample_points,)
+        # total_probs = (total_probs - total_probs.min()) / (total_probs.max() - total_probs.min())
+        # total_logits = probs_to_logits(total_probs, is_binary=True)
+        total_logits = torch.sum(logits, dim=0)
         if self.training:
-            return logits
-        return dist.Bernoulli(logits=logits)
+            return total_logits
+        return dist.Bernoulli(logits=total_logits)
 
     def build_scene_metadata(self, node_tag):
         """Builds scene metadata for scene building.

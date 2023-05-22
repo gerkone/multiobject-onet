@@ -117,7 +117,9 @@ class CBatchNorm1d(nn.Module):
         # Submodules
         self.conv_gamma = nn.Conv1d(c_dim, f_dim, 1)
         self.conv_beta = nn.Conv1d(c_dim, f_dim, 1)
+        self.conv_mix = nn.Conv1d(c_dim, f_dim, 1)
         if norm_method == "batch":
+            # TODO (GAL): track_running_stats=False
             self.bn = nn.BatchNorm1d(f_dim, affine=False, track_running_stats=False)
         elif norm_method == "instance":
             self.bn = nn.InstanceNorm1d(f_dim, affine=False, track_running_stats=False)
@@ -130,9 +132,10 @@ class CBatchNorm1d(nn.Module):
         nn.init.zeros_(self.conv_beta.weight)
         nn.init.ones_(self.conv_gamma.bias)
         nn.init.zeros_(self.conv_beta.bias)
+        nn.init.uniform_(self.conv_mix.weight)
+        nn.init.zeros_(self.conv_mix.bias)
 
     def forward(self, x, c):
-        assert x.size(0) == c.size(0)
         assert c.size(1) == self.c_dim
 
         # c is assumed to be of size batch_size x c_dim x T
@@ -143,9 +146,12 @@ class CBatchNorm1d(nn.Module):
         gamma = self.conv_gamma(c)
         beta = self.conv_beta(c)
 
+        # break object-wise symmetry
+        mix = self.conv_mix(c)
+
         # Batchnorm
         net = self.bn(x)
-        out = gamma * net + beta
+        out = (gamma * net + beta) * mix
 
         return out
 

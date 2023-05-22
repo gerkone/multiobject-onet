@@ -99,12 +99,13 @@ class DecoderCBatchNorm(nn.Module):
         if isinstance(code, tuple):
             code = code[0]
         p = p.transpose(1, 2)
-        net = self.fc_p(p)
 
+        h_p = self.fc_p(p)
+        
         for i in range(0, self.n_blocks):
-            net = self._modules[f"block_{i}"](net, code)
+            h_p = self._modules[f"block_{i}"](h_p, code)
 
-        out = self.fc_out(self.actvn(self.bn(net, code)))
+        out = self.fc_out(self.actvn(self.bn(h_p, code)))
         out = out.squeeze(1)
 
         return out

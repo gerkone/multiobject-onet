@@ -185,6 +185,8 @@ class ObjectTagField(Field):
         item_dict = np.load(file_path)
         obj_ids = item_dict["objects"]
 
+        # TODO (NINA) do real segmentation here
+
         # kmeans over objects
         # TODO avoid reloading
         points = self.point_field.load(model_path, idx, category)[None]

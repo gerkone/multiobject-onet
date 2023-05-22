@@ -58,10 +58,10 @@ class Trainer(BaseTrainer):
         loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
             data, n_obj
         ).mean()
-        if loss < 0.005:
-            self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
         # NOTE debug only
-        # loss = sum(self.compute_loss({k: v[i] for k, v in data.items()}, n_obj) for i in range(n_obj)) / n_obj
+        # loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
+        # if loss < 0.005:
+        #     pass
         loss.backward()
         self.optimizer.step()
 
@@ -143,7 +143,7 @@ class Trainer(BaseTrainer):
         """
         device = self.device
         p = data.get("points").to(device)
-        occ = data.get("points.occ").to(device)  # (n_points,)
+        target_occ = data.get("points.occ").to(device)  # (n_points,)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
         seg_target = data.get("object_tag").to(device)
 
@@ -164,17 +164,10 @@ class Trainer(BaseTrainer):
         # encoder
         codes = self.model.encode_multi_object(inputs, node_tag, n_obj)
 
-        # TODO (GAL) crop sample grid
-        p_crop = torch.stack([p] * n_obj)
-
-        pred_occ = self.model.decode_multi_object(p_crop, codes)  # (total_n_points,)
-
-        # occ_mask = crop_occupancy_grid(
-        #     p, inputs, occ, node_tag, n_obj
-        # )  # (n_obj, n_points_per_obj)
+        pred_occ = self.model.decode_multi_object(p.unsqueeze(0), codes)  # (total_n_points,)
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, occ, reduction="mean"
+            pred_occ, target_occ, reduction="mean"
         )
 
         total_loss = scene_reconstruction_loss
