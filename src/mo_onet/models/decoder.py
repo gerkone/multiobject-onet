@@ -83,6 +83,7 @@ class DecoderCBatchNorm(nn.Module):
         super().__init__()
 
         self.n_blocks = n_blocks
+        self.c_dim = c_dim
 
         self.fc_p = nn.Conv1d(3, hidden_size, 1)
 
@@ -98,14 +99,20 @@ class DecoderCBatchNorm(nn.Module):
     def forward(self, p, code, **kwargs):
         if isinstance(code, tuple):
             code = code[0]
+
+        bs, n_obj, _ = code.shape
+
+        # add n_obj dimension to p
+        p = p.repeat(n_obj, 1, 1)  # (bs * n_obj, n_points, 3)
         p = p.transpose(1, 2)
+        code = code.flatten(0, 1)  # (bs * n_obj, c_dim)
 
         h_p = self.fc_p(p)
-        
+
         for i in range(0, self.n_blocks):
             h_p = self._modules[f"block_{i}"](h_p, code)
 
         out = self.fc_out(self.actvn(self.bn(h_p, code)))
-        out = out.squeeze(1)
+        out = out.view(bs, n_obj, -1)  # (bs, n_obj, n_points)
 
         return out

@@ -94,69 +94,80 @@ class MOGConv(nn.Module):
         self.readout = nn.Conv1d(hidden_size, c_dim, kernel_size=1, bias=False)
 
     def forward(self, x, node_tag, n_obj):
-        x = x.squeeze()
-        n_points = x.shape[0]
+        """MOGConv forward.
+
+        Args:
+            x (torch.Tensor): Point cloud (bs, n_nodes, 3)
+            node_tag (torch.Tensor): Node tag index for aggregation (bs, n_nodes)
+            n_obj (int): number of objects in the scenes
+        """
+        bs, n_nodes, _ = x.shape
+        x = x.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
+        node_tag = node_tag.view(-1)  # (bs * n_nodes,)
         with torch.no_grad():
-            idx = knn_graph(x, 360, node_tag)[0].view(n_points, 360)  # (n_points, k)
+            idx = knn_graph(x, 360, node_tag)[0].view(
+                bs * n_nodes, 360
+            )  # (bs * n_nodes, k)
 
         x = x.permute(1, 0)
 
-        x = self._transform(x, k=self.k, idx=idx[:, :20])  # (3*2, n_points, k)
-        x = self.conv1(x)  # (hidden_size, n_points, k)
-        x = self.conv2(x)  # (hidden_size, n_points, k)
-        x1 = x.max(dim=-1, keepdim=False)[0]  # (hidden_size, n_points)
+        x = self._transform(x, k=self.k, idx=idx[:, :20])  # (3*2, bs * n_nodes, k)
+        x = self.conv1(x)  # (hidden_size, bs * n_nodes, k)
+        x = self.conv2(x)  # (hidden_size, bs * n_nodes, k)
+        x1 = x.max(dim=-1, keepdim=False)[0]  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
             x1, k=self.k, idx=idx[:, :40][:, ::2]
-        )  # (hidden_size * 2, n_points, k)
-        x = self.conv3(x)  # (hidden_size, n_points, k)
-        x = self.conv4(x)  # (hidden_size, n_points, k)
-        x2 = x.max(dim=-1, keepdim=False)[0] + x1  # (hidden_size, n_points)
+        )  # (hidden_size * 2, bs * n_nodes, k)
+        x = self.conv3(x)  # (hidden_size, bs * n_nodes, k)
+        x = self.conv4(x)  # (hidden_size, bs * n_nodes, k)
+        x2 = x.max(dim=-1, keepdim=False)[0] + x1  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
             x2, k=self.k, idx=idx[:, :120][:, ::6]
-        )  # (hidden_size * 2, n_points, k)
-        x = self.conv5(x)  # (hidden_size, n_points, k)
+        )  # (hidden_size * 2, bs * n_nodes, k)
+        x = self.conv5(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv6(x)
-        x3 = x.max(dim=-1, keepdim=False)[0] + x2  # (hidden_size, n_points)
+        x3 = x.max(dim=-1, keepdim=False)[0] + x2  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
             x3, k=self.k, idx=idx[:, :360][:, ::18]
-        )  # (hidden_size * 2, n_points, k)
-        x = self.conv7(x)  # (hidden_size, n_points, k)
-        x = self.conv8(x)  # (hidden_size, n_points, k)
-        x4 = x.max(dim=-1, keepdim=False)[0] + x3  # (hidden_size, n_points)
+        )  # (hidden_size * 2, bs * n_nodes, k)
+        x = self.conv7(x)  # (hidden_size, bs * n_nodes, k)
+        x = self.conv8(x)  # (hidden_size, bs * n_nodes, k)
+        x4 = x.max(dim=-1, keepdim=False)[0] + x3  # (hidden_size, bs * n_nodes)
 
-        x = torch.cat((x1, x2, x3, x4), dim=0)  # (hidden_size * 4, n_points)
+        x = torch.cat((x1, x2, x3, x4), dim=0)  # (hidden_size * 4, bs * n_nodes)
 
-        x = self.conv9(x)  # (hidden_size * 2, n_points)
+        x = self.conv9(x)  # (hidden_size * 2, bs * n_nodes)
         x = x.max(dim=-1, keepdim=True)[0]  # (hidden_size * 2, 1)
 
-        x = x.repeat(1, n_points)  # (hidden_size * 2, n_points)
+        x = x.repeat(1, bs * n_nodes)  # (hidden_size * 2, bs * n_nodes)
 
-        x4 = torch.cat((x, x4), dim=0)  # (hidden_size * 2 + hidden_size, n_points)
-        x4 = self.conv10(x4)  # (hidden_size * 2, n_points)
+        x4 = torch.cat((x, x4), dim=0)  # (hidden_size * 2 + hidden_size, bs * n_nodes)
+        x4 = self.conv10(x4)  # (hidden_size * 2, bs * n_nodes)
 
-        x3 = torch.cat((x4, x3), dim=0)  # (hidden_size * 2 + hidden_size, n_points)
-        x3 = self.conv11(x3)  # (hidden_size * 2, n_points)
+        x3 = torch.cat((x4, x3), dim=0)  # (hidden_size * 2 + hidden_size, bs * n_nodes)
+        x3 = self.conv11(x3)  # (hidden_size * 2, bs * n_nodes)
 
-        x2 = torch.cat((x3, x2), dim=0)  # (hidden_size * 2 + hidden_size, n_points)
-        x2 = self.conv12(x2)  # (hidden_size, n_points)
+        x2 = torch.cat((x3, x2), dim=0)  # (hidden_size * 2 + hidden_size, bs * n_nodes)
+        x2 = self.conv12(x2)  # (hidden_size, bs * n_nodes)
 
-        x1 = torch.cat((x2, x1), dim=0)  # (hidden_size + hidden_size, n_points)
-        x1 = self.conv13(x1)  # (hidden_size, n_points)
+        x1 = torch.cat((x2, x1), dim=0)  # (hidden_size + hidden_size, bs * n_nodes)
+        x1 = self.conv13(x1)  # (hidden_size, bs * n_nodes)
 
         # readout to global code
-        code = self.readout(x1).permute(1, 0)  # (n_points, c_dim)
+        code = self.readout(x1).permute(1, 0)  # (bs * n_nodes, c_dim)
         # collect codes on objects
-        codes = scatter(code, node_tag.long(), n_obj, "mean")  # (n_obj, c_dim)
+        codes = scatter(code, node_tag.long(), bs * n_obj, "mean")  # (n_obj, c_dim)
+        codes = codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
         return codes
 
     def _transform(self, x, k=20, batch=None, idx=None, dim9=False, featdiff=True):
         n_nodes = x.shape[1]
         if idx is None:
             if dim9 == False:
-                idx = knn_graph(x, k, batch)  # (batch_size, n_points, k)
+                idx = knn_graph(x, k, batch)  # (batch_size, bs * n_nodes, k)
             else:
                 idx = knn_graph(x[:, 6:], k, batch)
         idx = idx.contiguous()
@@ -172,7 +183,7 @@ class MOGConv(nn.Module):
         else:
             feature = torch.cat((feature, x), dim=2).permute(2, 0, 1).contiguous()
 
-        return feature  # (2*n_dims, n_points, k)
+        return feature  # (2*n_dims, bs * n_nodes, k)
 
 
 # TODO (GAL) wip

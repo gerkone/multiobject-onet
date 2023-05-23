@@ -53,11 +53,14 @@ class Trainer(BaseTrainer):
 
         # TODO ensure same number of objects per batch
         # vmap over batch size
-        # TODO (GAL) vmap is very slow right now. Try to go back to batching
         n_obj = data["object_tag"].max().item() + 1
-        loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
-            data, n_obj
-        ).mean()
+        # TODO (GAL) vmap is very slow right now. Try to go back to batching
+        # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
+        #     data, n_obj
+        # ).mean()
+
+        loss = self.compute_loss(data, n_obj)
+
         # NOTE debug only
         # loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
         # if loss < 0.005:
@@ -143,7 +146,7 @@ class Trainer(BaseTrainer):
         """
         device = self.device
         p = data.get("points").to(device)
-        target_occ = data.get("points.occ").to(device)  # (n_points,)
+        target_occ = data.get("points.occ").to(device)  # (bs, n_points,)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
         seg_target = data.get("object_tag").to(device)
 
@@ -164,7 +167,7 @@ class Trainer(BaseTrainer):
         # encoder
         codes = self.model.encode_multi_object(inputs, node_tag, n_obj)
 
-        pred_occ = self.model.decode_multi_object(p.unsqueeze(0), codes)  # (total_n_points,)
+        pred_occ = self.model.decode_multi_object(p, codes)  # (bs, total_n_points,)
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
             pred_occ, target_occ, reduction="mean"

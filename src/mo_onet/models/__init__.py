@@ -66,12 +66,16 @@ class MultiObjectONet(nn.Module):
         """Encodes the input.
 
         Args:
-            pc (tensor): the input point cloud (n_points, 3)
-            node_tag (tensor): the node-wise instance tag (n_points)
+            pc (tensor): the input point cloud (bs, n_points, 3)
+            node_tag (tensor): the node-wise instance tag (bs, n_points)
             n_obj (int): number of objects in the scene
         """
-        pc = pc.unsqueeze(0)
-        return self.encoder(pc, node_tag, n_obj)
+        bs = pc.shape[0]
+        # add batch offset to node_tag
+        batch_offset = torch.arange(0, bs, device=pc.device)[:, None] * n_obj
+        node_tag = node_tag + batch_offset
+        codes = self.encoder(pc, node_tag, n_obj)  # (bs, n_obj, c_dim)
+        return codes
 
     def segment_to_single_graphs(self, pc):
         """Segments the input point cloud into single shapes.
@@ -96,13 +100,13 @@ class MultiObjectONet(nn.Module):
             p_r (tensor): scene occupancy probs
         """
         # TODO should operate everywhere in unit cube right?
-        logits = self.decoder(p, codes, **kwargs)  # (n_obj, n_sample_points)
+        logits = self.decoder(p, codes, **kwargs)  # (bs * n_obj, n_sample_points)
         # sum over objects in prob space
         # probs = logits_to_probs(logits, is_binary=True)
-        # total_probs = torch.sum(probs, dim=0)  # (n_sample_points,)
+        # total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points,)
         # total_probs = (total_probs - total_probs.min()) / (total_probs.max() - total_probs.min())
         # total_logits = probs_to_logits(total_probs, is_binary=True)
-        total_logits = torch.sum(logits, dim=0)
+        total_logits = torch.sum(logits, dim=1)
         if self.training:
             return total_logits
         return dist.Bernoulli(logits=total_logits)
