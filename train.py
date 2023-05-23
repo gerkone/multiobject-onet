@@ -157,18 +157,16 @@ if __name__ == "__main__":
         epoch_it += 1
 
         for batch in train_loader:
-            while True:
-                it += 1
-                loss = trainer.train_step(batch)
-                logger.add_scalar("train/loss", loss, it)
-                print(f"it: {it}, loss: {loss:.4f}")
+            it += 1
+            loss = trainer.train_step(batch)
+            logger.add_scalar("train/loss", loss, it)
 
             # Print output
             if print_every > 0 and (it % print_every) == 0:
                 t = datetime.datetime.now()
                 print(
                     f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, "
-                    f"time: {time.time() - t0:.2f}s, {t.hour}:{t.minute}"
+                    f"time: {time.time() - t0:.2f}s, {t.hour}:{t.minute:02d}"
                 )
 
             # TODO put back in

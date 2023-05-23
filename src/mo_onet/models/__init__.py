@@ -74,7 +74,7 @@ class MultiObjectONet(nn.Module):
         # add batch offset to node_tag
         batch_offset = torch.arange(0, bs, device=pc.device)[:, None] * n_obj
         node_tag = node_tag + batch_offset
-        codes = self.encoder(pc, node_tag, n_obj)  # (bs, n_obj, c_dim)
+        codes = self.encoder(pc, node_tag)  # (bs, n_obj, c_dim)
         return codes
 
     def segment_to_single_graphs(self, pc):
