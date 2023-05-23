@@ -186,8 +186,8 @@ class EGNN(nn.Module):
             nn.Linear(self.hidden_size + 1, self.hidden_size),
             InstanceNorm(self.hidden_size, is_on=instance_norm, affine=True),
             act_fn,
-            nn.Linear(self.hidden_size, c_dim + vector_c_dim)
-)
+            nn.Linear(self.hidden_size, c_dim + vector_c_dim),
+        )
 
         for i in range(0, n_layers):
             self.add_module(

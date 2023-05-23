@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .utils import knn_graph, scatter
+from .utils import knn_graph_topk, scatter
 
 
 class MOGConv(nn.Module):
@@ -66,7 +66,7 @@ class MOGConv(nn.Module):
         )
 
         self.conv9 = nn.Sequential(
-            nn.Conv1d(hidden_size * 4, 128, kernel_size=1, bias=False),
+            nn.Conv1d(hidden_size * 4, hidden_size * 2, kernel_size=1, bias=False),
             self.bn9,
             nn.LeakyReLU(negative_slope=0.2),
         )
@@ -105,33 +105,36 @@ class MOGConv(nn.Module):
         x = x.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
         node_tag = node_tag.view(-1)  # (bs * n_nodes,)
         with torch.no_grad():
-            idx = knn_graph(x, 360, node_tag)[0].view(
-                bs * n_nodes, 360
+            n_neighbors = self.k * 18
+            idx = knn_graph_topk(x, n_neighbors, node_tag)[0].view(
+                bs * n_nodes, n_neighbors
             )  # (bs * n_nodes, k)
 
         x = x.permute(1, 0)
 
-        x = self._transform(x, k=self.k, idx=idx[:, :20])  # (3*2, bs * n_nodes, k)
+        x = self._transform(
+            x, k=self.k, idx=idx[:, : n_neighbors // 18]
+        )  # (3*2, bs * n_nodes, k)
         x = self.conv1(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv2(x)  # (hidden_size, bs * n_nodes, k)
         x1 = x.max(dim=-1, keepdim=False)[0]  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
-            x1, k=self.k, idx=idx[:, :40][:, ::2]
+            x1, k=self.k, idx=idx[:, : n_neighbors // 9][:, ::2]
         )  # (hidden_size * 2, bs * n_nodes, k)
         x = self.conv3(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv4(x)  # (hidden_size, bs * n_nodes, k)
         x2 = x.max(dim=-1, keepdim=False)[0] + x1  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
-            x2, k=self.k, idx=idx[:, :120][:, ::6]
+            x2, k=self.k, idx=idx[:, : n_neighbors // 3][:, ::6]
         )  # (hidden_size * 2, bs * n_nodes, k)
         x = self.conv5(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv6(x)
         x3 = x.max(dim=-1, keepdim=False)[0] + x2  # (hidden_size, bs * n_nodes)
 
         x = self._transform(
-            x3, k=self.k, idx=idx[:, :360][:, ::18]
+            x3, k=self.k, idx=idx[:, :n_neighbors][:, ::18]
         )  # (hidden_size * 2, bs * n_nodes, k)
         x = self.conv7(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv8(x)  # (hidden_size, bs * n_nodes, k)

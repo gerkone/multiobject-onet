@@ -51,9 +51,13 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
-        # TODO ensure same number of objects per batch
+        # ensure same number of objects per batch
+        n_obj = [d.max() for d in data["object_tag"]]
+        assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."
+
         # vmap over batch size
-        n_obj = data["object_tag"].max().item() + 1
+        n_obj = n_obj[0] + 1
+
         # TODO (GAL) vmap is very slow right now. Try to go back to batching
         # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
         #     data, n_obj
@@ -61,10 +65,8 @@ class Trainer(BaseTrainer):
 
         loss = self.compute_loss(data, n_obj)
 
-        # NOTE debug only
-        # loss = self.compute_loss({k: v[0] for k, v in data.items()}, n_obj)
-        # if loss < 0.005:
-        #     pass
+        if loss < 0.05:
+            pass
         loss.backward()
         self.optimizer.step()
 

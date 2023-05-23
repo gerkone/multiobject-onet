@@ -1,7 +1,8 @@
 import torch
+import warnings
 
 
-def knn_graph(x: torch.Tensor, k: int, batch: torch.Tensor) -> torch.Tensor:
+def knn_graph_topk(x: torch.Tensor, k: int, batch: torch.Tensor) -> torch.Tensor:
     """Naive k-nearest neighbor graph for a set of points.
 
     Args:
@@ -12,8 +13,10 @@ def knn_graph(x: torch.Tensor, k: int, batch: torch.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: Edge indices with shape (2, num_points * k)
     """
+    warnings.warn("[DEPRECATED] Use knn_graph from torch-cluster instead.")
     num_points = x.shape[0]
-    # TODO: computes all pairwise distances -> blows up memory for large inputs
+    # computes all pairwise distances -> blows up memory for large inputs
+    # TODO (GAL) use knn from torch-cluster
     d = torch.cdist(x, x)
     # exclude self from neighbors
     d = d.fill_diagonal_(torch.inf)
@@ -37,9 +40,9 @@ def scatter(
         data (torch.Tensor): Input data (num_points, channels)
         segment_ids (torch.Tensor): Segment ids (num_points,)
         num_segments (int): Number of segments
-        reduce (str, optional): Reduce operation. ["sum", "prod", "mean", "max", "min"]
+        reduce (str, optional): Reduce operation. "sum", "prod", "mean", "amax", "amin"
     """
-    assert reduce in ["sum", "prod", "mean", "max", "min"]
+    assert reduce in ["sum", "prod", "mean", "amax", "amin"]
     data = data.squeeze()
     segment_ids = segment_ids.flatten()
     result_shape = (num_segments, data.size(1))
