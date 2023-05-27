@@ -170,11 +170,11 @@ class Shapes3dDataset(data.Dataset):
         for field_name, field in self.fields.items():
             try:
                 field_data = field.load(model_path, idx, info)
-            except Exception:
+            except Exception as e:
                 if self.no_except:
                     logger.warn(
-                        "Error occured when loading field %s of model %s"
-                        % (field_name, model)
+                        "Error occured when loading field %s of model %s.\nError msg: %s"
+                        % (field_name, model, e)
                     )
                     return None
                 else:
@@ -281,9 +281,11 @@ def collate_remove_none(batch):
     Args:
         batch: batch
     """
-
-    batch = list(filter(lambda x: x is not None, batch))
-    return data.dataloader.default_collate(batch)
+    # TODO: batching
+    
+    # batch = list(filter(lambda x: x is not None, batch))
+    # return data.dataloader.default_collate(batch)
+    return batch
 
 
 def worker_init_fn(worker_id):

@@ -129,11 +129,11 @@ def get_dataset(mode, cfg, return_idx=False):
         # Method specific fields (usually correspond to output)
         fields = method_dict[method].config.get_data_fields(mode, cfg)
         # Input fields
-        inputs_field, seg_field = get_inputs_field(mode, cfg)
+        inputs_field = get_inputs_field(mode, cfg)
         if inputs_field is not None:
             fields["inputs"] = inputs_field
-        if seg_field is not None:
-            fields["object_tag"] = seg_field
+        # if seg_field is not None:
+        #     fields["object_tag"] = seg_field
 
         if return_idx:
             fields["idx"] = data.IndexField()
@@ -168,8 +168,10 @@ def get_inputs_field(mode, cfg):
         )
         inputs_field = data.PointCloudField(
             cfg["data"]["pointcloud_file"],
+            cfg["data"]["item_file"],
             transform,
-            multi_files=cfg["data"]["multi_files"],
+            multi_object=cfg["method"] == "mo_onet",
+            multi_files=cfg["data"]["multi_files"]
         )
     elif input_type == "partial_pointcloud":
         transform = transforms.Compose(
@@ -204,9 +206,8 @@ def get_inputs_field(mode, cfg):
     else:
         raise ValueError("Invalid input type (%s)" % input_type)
 
-    seg_field = None
+    # seg_field = inputs_field["seg_targets"]
+    # if multi_object:
+    #     seg_field = data.ObjectTagField(inputs_field, cfg["data"]["item_file"])
 
-    if multi_object:
-        seg_field = data.ObjectTagField(inputs_field, cfg["data"]["item_file"])
-
-    return inputs_field, seg_field
+    return inputs_field

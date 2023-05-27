@@ -9,6 +9,7 @@ from sklearn.cluster import KMeans
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
+from src.utils.segment import get_bboxes, segment_objects
 
 
 class IndexField(Field):
@@ -334,15 +335,17 @@ class PointCloudField(Field):
     randomly sampled on the mesh.
 
     Args:
-        file_name (str): file name
+        point_file_name (str): file name
         transform (list): list of transformations applied to data points
         multi_files (callable): number of files
     """
 
-    def __init__(self, file_name, transform=None, multi_files=None):
-        self.file_name = file_name
+    def __init__(self, point_file_name, item_file_name, transform=None, multi_files=None, multi_object=None):
+        self.point_file_name = point_file_name
+        self.item_file_name = item_file_name
         self.transform = transform
         self.multi_files = multi_files
+        self.multi_object = multi_object
 
     def load(self, model_path, idx, category):
         """Loads the data point.
@@ -353,14 +356,15 @@ class PointCloudField(Field):
             category (int): index of category
         """
         if self.multi_files is None:
-            file_path = os.path.join(model_path, self.file_name)
+            file_path = os.path.join(model_path, self.point_file_name)
         else:
             num = np.random.randint(self.multi_files)
             file_path = os.path.join(
-                model_path, self.file_name, "%s_%02d.npz" % (self.file_name, num)
+                model_path, self.point_file_name, "%s_%02d.npz" % (self.point_file_name, num)
             )
-
+        
         pointcloud_dict = np.load(file_path)
+
 
         points = pointcloud_dict["points"].astype(np.float32)
         normals = pointcloud_dict["normals"].astype(np.float32)
@@ -373,6 +377,19 @@ class PointCloudField(Field):
         if self.transform is not None:
             data = self.transform(data)
 
+        if self.multi_object:
+            semantics = pointcloud_dict["semantics"].astype(np.int64)
+
+            item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
+            item_dict = np.load(item_file_path, allow_pickle=True)
+
+            bboxes = get_bboxes(item_dict["bboxes"], item_dict["xz_groundplane_range"])
+            segmented_objects = segment_objects(points, semantics, bboxes)
+            data["semantics"] = semantics
+            data["bboxes"] = bboxes
+            data["seg_targets"] = segmented_objects
+            data["n_objects"] = len(segmented_objects) - 1
+        # print("~~~~", data)
         return data
 
     def check_complete(self, files):
@@ -381,7 +398,7 @@ class PointCloudField(Field):
         Args:
             files: files
         """
-        complete = self.file_name in files
+        complete = self.point_file_name in files
         return complete
 
 

@@ -52,8 +52,8 @@ class Trainer(BaseTrainer):
         self.optimizer.zero_grad()
 
         # ensure same number of objects per batch
-        n_obj = [d.max() for d in data["object_tag"]]
-        assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."
+        n_obj = max([d["inputs.n_objects"] for d in data])  # batch has items from the dataset, can have 4-8 objcets per item
+        # assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."  # TODO: revisit
 
         # vmap over batch size
         n_obj = n_obj[0] + 1
