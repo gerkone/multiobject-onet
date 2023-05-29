@@ -166,33 +166,43 @@ class Shapes3dDataset(data.Dataset):
             data["pointcloud_crop"] = True
         else:
             info = c_idx
+        
+        fields = self.fields.copy()
+        points = self.load_field("points", fields["points"], data, model_path, idx, info, model)
+        fields.pop("points")
 
-        for field_name, field in self.fields.items():
-            try:
-                field_data = field.load(model_path, idx, info)
-            except Exception as e:
-                if self.no_except:
-                    logger.warn(
-                        "Error occured when loading field %s of model %s.\nError msg: %s"
-                        % (field_name, model, e)
-                    )
-                    return None
-                else:
-                    raise
-
-            if isinstance(field_data, dict):
-                for k, v in field_data.items():
-                    if k is None:
-                        data[field_name] = v
-                    else:
-                        data["%s.%s" % (field_name, k)] = v
-            else:
-                data[field_name] = field_data
-
+        for field_name, field in fields.items():
+            self.load_field(field_name, field, data, model_path, idx, info, model, points)
+        
         if self.transform is not None:
             data = self.transform(data)
-
+        
         return data
+
+    def load_field(self, field_name, field, data, model_path, idx, info, model, points=None):
+        try:
+            if field_name == "inputs":
+                field_data = field.load(model_path, idx, info, points)
+            else:
+                field_data = field.load(model_path, idx, info)
+        except Exception as e:
+            if self.no_except:
+                logger.warn(
+                    "Error occured when loading field %s of model %s.\nError msg: %s"
+                    % (field_name, model, e)
+                )
+                return None
+            else:
+                raise
+        if isinstance(field_data, dict):
+            for k, v in field_data.items():
+                if k is None:
+                    data[field_name] = v
+                else:
+                    data["%s.%s" % (field_name, k)] = v
+        else:
+            data[field_name] = field_data
+        return field_data
 
     def get_vol_info(self, model_path):
         """Get crop information
@@ -281,11 +291,9 @@ def collate_remove_none(batch):
     Args:
         batch: batch
     """
-    # TODO: batching
-    
-    # batch = list(filter(lambda x: x is not None, batch))
-    # return data.dataloader.default_collate(batch)
-    return batch
+    batch = list(filter(lambda x: x is not None, batch))
+    # print("COLLATE", batch)
+    return data.dataloader.default_collate(batch)
 
 
 def worker_init_fn(worker_id):

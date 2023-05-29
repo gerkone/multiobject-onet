@@ -9,8 +9,8 @@ from torch import autograd
 from tqdm import trange
 
 from src.common import add_key, coord2index, make_3d_grid, normalize_coord
-from src.utils.libmise import MISE
-from src.utils.libsimplify import simplify_mesh
+# from src.utils.libmise import MISE
+# from src.utils.libsimplify import simplify_mesh
 
 counter = 0
 

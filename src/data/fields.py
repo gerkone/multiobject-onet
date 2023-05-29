@@ -9,7 +9,7 @@ from sklearn.cluster import KMeans
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
-from src.utils.segment import get_bboxes, segment_objects
+from src.utils.segment import get_bboxes, segment_objects, separate_occ
 
 
 class IndexField(Field):
@@ -166,42 +166,6 @@ class PointsField(Field):
         return data
 
 
-class ObjectTagField(Field):
-    """Segmentation object tag field."""
-
-    def __init__(self, point_field, file_name):
-        self.point_field = point_field
-        self.file_name = file_name
-
-    def load(self, model_path, idx, category):
-        """Loads the data point.
-
-        Args:
-            model_path (str): path to model
-            idx (int): ID of data point
-            category (int): index of category
-        """
-        file_path = os.path.join(model_path, f"{self.file_name}.npz")
-
-        item_dict = np.load(file_path)
-        obj_ids = item_dict["objects"]
-
-        # TODO (NINA) do real segmentation here
-
-        # kmeans over objects
-        # TODO avoid reloading
-        points = self.point_field.load(model_path, idx, category)[None]
-
-        # import torch
-        # return torch.zeros(points.shape[0], dtype=torch.long)
-
-        return (
-            KMeans(n_clusters=len(obj_ids), n_init="auto")
-            .fit_predict(points)
-            .astype(np.int64)
-        )
-
-
 class VoxelsField(Field):
     """Voxel field class.
 
@@ -347,7 +311,7 @@ class PointCloudField(Field):
         self.multi_files = multi_files
         self.multi_object = multi_object
 
-    def load(self, model_path, idx, category):
+    def load(self, model_path, idx, category, points_iou=None):
         """Loads the data point.
 
         Args:
@@ -374,9 +338,6 @@ class PointCloudField(Field):
             "normals": normals,
         }
 
-        if self.transform is not None:
-            data = self.transform(data)
-
         if self.multi_object:
             semantics = pointcloud_dict["semantics"].astype(np.int64)
 
@@ -384,12 +345,18 @@ class PointCloudField(Field):
             item_dict = np.load(item_file_path, allow_pickle=True)
 
             bboxes = get_bboxes(item_dict["bboxes"], item_dict["xz_groundplane_range"])
-            segmented_objects = segment_objects(points, semantics, bboxes)
-            data["semantics"] = semantics
-            data["bboxes"] = bboxes
-            data["seg_targets"] = segmented_objects
-            data["n_objects"] = len(segmented_objects) - 1
-        # print("~~~~", data)
+            segmented, bboxes3d = segment_objects(points, semantics, bboxes)
+            data["semantics"] = semantics.astype(np.int32)
+            data["node_tags"] = segmented.astype(np.int32)
+
+            points_iou_pc = points_iou[None]
+            points_iou_occ = points_iou["occ"]
+            segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
+            data["node_occs"] = segmented_occ  # issue here with n_objects
+
+        if self.transform is not None:
+            data = self.transform(data)
+
         return data
 
     def check_complete(self, files):

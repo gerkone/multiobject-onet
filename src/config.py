@@ -127,6 +127,7 @@ def get_dataset(mode, cfg, return_idx=False):
     if dataset_type == "Shapes3D":
         # Dataset fields
         # Method specific fields (usually correspond to output)
+
         fields = method_dict[method].config.get_data_fields(mode, cfg)
         # Input fields
         inputs_field = get_inputs_field(mode, cfg)
@@ -155,7 +156,6 @@ def get_inputs_field(mode, cfg):
         cfg (dict): config dictionary
     """
     input_type = cfg["data"]["input_type"]
-    multi_object = cfg["method"] == "mo_onet"
 
     if input_type is None:
         inputs_field = None
@@ -205,9 +205,5 @@ def get_inputs_field(mode, cfg):
         inputs_field = data.IndexField()
     else:
         raise ValueError("Invalid input type (%s)" % input_type)
-
-    # seg_field = inputs_field["seg_targets"]
-    # if multi_object:
-    #     seg_field = data.ObjectTagField(inputs_field, cfg["data"]["item_file"])
 
     return inputs_field

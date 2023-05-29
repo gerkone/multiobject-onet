@@ -19,14 +19,17 @@ def segment_objects(points, semantics, bboxes, eps=0.007):
     mask = semantics == -1
     walls = points[mask]
     no_walls = points[~mask]
+    no_walls_i = np.squeeze(np.argwhere(semantics != -1))
+    sem_i = semantics[~mask]
 
     segmented_pts = []
     segmented_semantics = []
+    bboxes_3d = []
 
     segmented_pts.append(walls)  # 1st segment is for the walls
     segmented_semantics.append(-1)
-    
-    for bbox in bboxes:
+
+    for bbox_idx, bbox in enumerate(bboxes):
         bottom_left_x = bbox[0][0]
         bottom_left_z = bbox[0][1]
         up_right_x = bbox[1][0]
@@ -36,25 +39,23 @@ def segment_objects(points, semantics, bboxes, eps=0.007):
         mask_z = (no_walls[:, 2] >= bottom_left_z - eps) & (no_walls[:, 2] <= up_right_z + eps)
         mask = mask_x & mask_z
         seg = no_walls[mask]
+        
         if seg.shape[0] > 0: # there are cases when no object points are in the pointcloud - basicallly < n_objects argets
-            segmented_pts.append(seg)
+            min_coordinates = np.min(seg, axis=0)
+            max_coordinates = np.max(seg, axis=0)
 
-            idx = np.where(np.all(points == seg[0], axis=1))[0][0]  # id of the point in the original pointcloud
-            segmented_semantics.append(semantics[idx])  # adding the semantic id
-    
-    min_seg_pts = min([seg_pts.shape[0] for seg_pts in segmented_pts])
-    
-    segmented_objs = []
-    for obj in segmented_pts:  # batch with objects of different sizes doesn't work - TODO figure out how
-        idx = np.round(np.linspace(0, obj.shape[0] - 1, min_seg_pts)).astype(int)
-        # np.random.choice(obj, size=min_seg_pts, replace=False) # or random maybe
-        subsampled = obj[idx]
-        segmented_objs.append(subsampled)
+            sem_i[mask] = sem_i[mask] * 10 + bbox_idx
+            bboxes_3d.append((min_coordinates, max_coordinates))
+    semantics[no_walls_i] = sem_i
 
-    return segmented_pts
+    return semantics, bboxes_3d
 
-
-
-
-
-
+def separate_occ(points, occupancy, bboxes3d, eps = 0.007, N=4):
+    seg_occs = np.tile(np.expand_dims(occupancy, 0), (N, 1))
+    for i, bbox in enumerate(bboxes3d):
+        mask_x = (points[:, 0] >= bbox[0][0] - eps) & (points[:, 0] <= bbox[1][0] + eps)
+        mask_y = (points[:, 1] >= bbox[0][1] - eps) & (points[:, 0] <= bbox[1][1] + eps)
+        mask_z = (points[:, 2] >= bbox[0][2] - eps) & (points[:, 0] <= bbox[1][2] + eps)
+        mask = mask_x & mask_y & mask_z
+        seg_occs[i][~mask] = 0
+    return np.stack(seg_occs, axis=0)

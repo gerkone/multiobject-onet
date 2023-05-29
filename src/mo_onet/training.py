@@ -52,11 +52,11 @@ class Trainer(BaseTrainer):
         self.optimizer.zero_grad()
 
         # ensure same number of objects per batch
-        n_obj = max([d["inputs.n_objects"] for d in data])  # batch has items from the dataset, can have 4-8 objcets per item
+        n_obj = 4  # batch has items from the dataset, can have 4-8 objcets per item
         # assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."  # TODO: revisit
 
         # vmap over batch size
-        n_obj = n_obj[0] + 1
+        # n_obj = n_obj[0] + 1
 
         # TODO (GAL) vmap is very slow right now. Try to go back to batching
         # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
@@ -150,7 +150,8 @@ class Trainer(BaseTrainer):
         p = data.get("points").to(device)
         target_occ = data.get("points.occ").to(device)  # (bs, n_points,)
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        seg_target = data.get("object_tag").to(device)
+        node_tag = data.get("inputs.node_tags").to(device)
+        node_occs = data.get("inputs.node_occs").to(device)  # TODO: GG - here is the (n_obj, occ)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -164,7 +165,6 @@ class Trainer(BaseTrainer):
         # segment and split objects
         # TODO real instance segmentation
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
-        node_tag = seg_target
 
         # encoder
         codes = self.model.encode_multi_object(inputs, node_tag, n_obj)
