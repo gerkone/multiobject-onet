@@ -8,7 +8,7 @@ from src.mo_onet.models import decoder, segmenter
 
 decoder_dict = {
     "e3_decoder": decoder.E3Decoder,
-    "cbn_decoder": decoder.DecoderCBatchNorm,
+    "cbn_decoder": decoder.DecoderCBN,
 }
 
 segmenter_dict = {
@@ -60,17 +60,17 @@ class MultiObjectONet(nn.Module):
             scene_metadata (dict): scene metadata for scene building
         """
         node_tag, scene_metadata = self.segment_to_single_graphs(pc)
-        return self.encode_multi_object(node_tag), scene_metadata
+        return self.encode_multi_object(pc, node_tag), scene_metadata
 
-    def encode_multi_object(self, pc, node_tag, n_obj=None):
+    def encode_multi_object(self, pc, node_tag):
         """Encodes the input.
 
         Args:
             pc (tensor): the input point cloud (bs, n_points, 3)
             node_tag (tensor): the node-wise instance tag (bs, n_points)
-            n_obj (int): number of objects in the scene
         """
         bs = pc.shape[0]
+        n_obj = node_tag.max() + 1
         # add batch offset to node_tag
         batch_offset = torch.arange(0, bs, device=pc.device)[:, None] * n_obj
         node_tag = node_tag + batch_offset

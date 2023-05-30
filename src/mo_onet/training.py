@@ -65,10 +65,6 @@ class Trainer(BaseTrainer):
 
         loss = self.compute_loss(data, n_obj)
 
-        if loss < 0.05:
-            pass
-        loss.backward()
-        self.optimizer.step()
 
         return loss.item()
 
@@ -167,7 +163,7 @@ class Trainer(BaseTrainer):
         node_tag = seg_target
 
         # encoder
-        codes = self.model.encode_multi_object(inputs, node_tag, n_obj)
+        codes = self.model.encode_multi_object(inputs, node_tag)
 
         pred_occ = self.model.decode_multi_object(p, codes)  # (bs, total_n_points,)
 

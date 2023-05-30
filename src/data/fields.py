@@ -191,14 +191,14 @@ class ObjectTagField(Field):
         # TODO avoid reloading
         points = self.point_field.load(model_path, idx, category)[None]
 
-        # import torch
-        # return torch.zeros(points.shape[0], dtype=torch.long)
+        import torch
+        return torch.zeros(points.shape[0], dtype=torch.long)
 
-        return (
-            KMeans(n_clusters=len(obj_ids), n_init="auto")
-            .fit_predict(points)
-            .astype(np.int64)
-        )
+        # return (
+        #     KMeans(n_clusters=len(obj_ids), n_init="auto")
+        #     .fit_predict(points)
+        #     .astype(np.int64)
+        # )
 
 
 class VoxelsField(Field):

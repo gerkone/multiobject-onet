@@ -1,11 +1,11 @@
 method: mo_onet
 data:
   input_type: pointcloud
-  classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
+  classes: ["rooms_04", "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
   path: /local/disk1/gg/data/synthetic_0405
-  pointcloud_n: 2000 # 5000 is probably a reasonable number for real training
+  pointcloud_n: 1000 # 5000 is probably a reasonable number for real training
   pointcloud_noise: 0.001
-  points_subsample: 1024 # 2048
+  points_subsample: 2048
   points_file: points_iou
   item_file: item_dict
   points_iou_file: points_iou
@@ -16,21 +16,23 @@ data:
 model:
   encoder: egnn
   encoder_kwargs:
-    hidden_size: 64
-    n_layers: 5
-    n_neighbors: 10
+    hidden_size: 128
+    n_layers: 4
+    n_neighbors: 20
     instance_norm: True
-  decoder: cbn_decoder      
+    # attention: False
+  decoder: e3_decoder      
   decoder_kwargs:
-    hidden_size: 64
+    hidden_size: 128
+    n_blocks: 4
   segmenter: segmenter
   segmenter_kwargs: {}
   c_dim: 64
 training:
   out_dir:  out/default
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
-  print_every: 5
+  print_every: 20
   visualize_every: 1000
   checkpoint_every: 1000
   validate_every: 2000

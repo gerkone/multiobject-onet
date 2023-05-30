@@ -146,13 +146,13 @@ class CBatchNorm1d(nn.Module):
         beta = self.conv_beta(c)
 
         # break object-wise symmetry
-        mix = self.conv_mix(c)
+        # mix = self.conv_mix(c)  # (bs, f_dim, 1)
 
         # TODO (GAL): fix shapes with batch here
 
         # Batchnorm
         x = self.bn(x)
-        out = (gamma * x + beta) * mix  # (bs * n_obj, f_dim, n_points)
+        out = (gamma * x + beta) #* mix  # (bs * n_obj, f_dim, n_points)
         return out
 
 

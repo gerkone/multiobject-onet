@@ -44,10 +44,10 @@ class E_GCL(nn.Module):
         self.attention = attention
         self.normalize = normalize
         self.epsilon = 1e-8
-        edge_coords_nf = 1
+        edge_vecs_nf = 1
 
         self.edge_mlp = nn.Sequential(
-            nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_size),
+            nn.Linear(input_edge + edge_vecs_nf + edges_in_d, hidden_size),
             InstanceNorm(hidden_size, affine=True, is_on=instance_norm),
             act_fn,
             nn.Linear(hidden_size, hidden_size),
@@ -64,21 +64,18 @@ class E_GCL(nn.Module):
         layer = nn.Linear(hidden_size, 1, bias=False)
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
 
-        coord_mlp = []
-        coord_mlp.append(nn.Linear(hidden_size, hidden_size))
-        coord_mlp.append(InstanceNorm(hidden_size, affine=True, is_on=instance_norm))
-        coord_mlp.append(act_fn)
-        coord_mlp.append(layer)
-        self.coord_mlp = nn.Sequential(*coord_mlp)
+        vec_mlp = []
+        vec_mlp.append(nn.Linear(hidden_size, hidden_size))
+        vec_mlp.append(InstanceNorm(hidden_size, affine=True, is_on=instance_norm))
+        vec_mlp.append(act_fn)
+        vec_mlp.append(layer)
+        self.vec_mlp = nn.Sequential(*vec_mlp)
 
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_size, 1), nn.Sigmoid())
 
     def edge_model(self, source, target, radial, edge_attr):
-        if edge_attr is None:  # Unused.
-            out = torch.cat([source, target, radial], dim=1)
-        else:
-            out = torch.cat([source, target, radial, edge_attr], dim=1)
+        out = torch.cat([source, target, radial, edge_attr], dim=1)
         out = self.edge_mlp(out)
         if self.attention:
             att_val = self.att_mlp(out)
@@ -98,39 +95,36 @@ class E_GCL(nn.Module):
             out = x + out
         return out  # (n_nodes, hidden_size)
 
-    def coord_model(self, coord, edge_index, coord_diff, edge_feat):
+    def vec_model(self, vec, edge_index, vec_diff, edge_feat):
         src, _ = edge_index
-        trans = coord_diff * self.coord_mlp(edge_feat)  # (n_edges, 3)
-        agg = torch.zeros_like(coord, device=coord.device)
+        trans = vec_diff * self.vec_mlp(edge_feat)  # (n_edges, 3)
+        agg = torch.zeros_like(vec, device=vec.device)
         agg = agg.index_add(0, src, trans)  # (n_nodes, 3)
-        # TODO (GAL) bug somewhere: edge index is not always correct
-        coord = coord + agg
-        return coord  # (n_nodes, 3)
+        vec = vec + agg
+        return vec  # (n_nodes, 3)
 
-    def coord2radial(self, edge_index, coord):
+    def vec2radial(self, edge_index, vec):
         src, dst = edge_index
-        coord_diff = coord[src] - coord[dst]
-        radial = torch.sum(coord_diff**2, 1).unsqueeze(1)
+        vec_diff = vec[src] - vec[dst]
+        radial = torch.sum(vec_diff**2, 1).unsqueeze(1)
 
         if self.normalize:
-            coord_diff = coord_diff / torch.sqrt(radial).detach() + self.epsilon
+            vec_diff = vec_diff / torch.sqrt(radial).detach() + self.epsilon
 
-        return radial, coord_diff
+        return radial, vec_diff
 
-    def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
+    def forward(self, h, edge_index, vec, edge_attr=None, node_attr=None):
         src, dst = edge_index
-        radial, coord_diff = self.coord2radial(edge_index, coord)
+        radial, vec_diff = self.vec2radial(edge_index, vec)
         edge_feat = self.edge_model(
             h[src], h[dst], radial, edge_attr
         )  # (n_edges, hidden_size)
-        coord = self.coord_model(
-            coord, edge_index, coord_diff, edge_feat
-        )  # (n_nodes, 3)
+        vec = self.vec_model(vec, edge_index, vec_diff, edge_feat)  # (n_nodes, 3)
         h = self.node_model(
             h, edge_index, edge_feat, node_attr
         )  # (n_nodes, hidden_size)
 
-        return h, coord, edge_attr
+        return h, vec, edge_attr
 
 
 class EGNN(nn.Module):
@@ -139,8 +133,6 @@ class EGNN(nn.Module):
         c_dim=128,
         vector_c_dim=16,
         hidden_size=64,
-        scalar_dim=1,
-        edge_dim=1,
         device="cpu",
         act_fn=nn.SiLU(),
         n_layers=3,
@@ -156,15 +148,13 @@ class EGNN(nn.Module):
             scalar_c_dim (int): Number of features for 'h' at the output
             vector_c_dim (int): Number of features for 'x' at the output
             hidden_size (int): Number of hidden features
-            scalar_dim (int): Number of features for 'h' at the input
-            edge_dim (int): Number of features for the edge features
             device (str): Device (e.g. 'cpu', 'cuda:0',...)
             act_fn (str): Non-linearity
             n_layers (int): Number of layers for the EGNN
             n_neighbors (int): Number of neighbors to consider in the knn graph
             residual (bool): Use residual connections, we recommend not changing this one
             attention (bool): Whether using attention or not
-            normalize (bool): Normalizes the coordinate messages.
+            normalize (bool): Normalizes the vector messages.
             instance_norm (bool): Whether to use instance norm or not
             eps (float): Small number to avoid numerical instabilities
         """
@@ -175,7 +165,7 @@ class EGNN(nn.Module):
         self.n_neighbors = n_neighbors
         self.eps = eps
 
-        self.embedding_in = nn.Linear(scalar_dim, self.hidden_size)
+        self.scalar_embedding_in = nn.Linear(2, self.hidden_size)
 
         self.c_dim = c_dim
         self.vector_c_dim = vector_c_dim
@@ -184,7 +174,6 @@ class EGNN(nn.Module):
         self.scalar_readout = nn.Linear(self.hidden_size, c_dim)
         self.readout_mix_net = nn.Sequential(
             nn.Linear(self.hidden_size + 1, self.hidden_size),
-            InstanceNorm(self.hidden_size, is_on=instance_norm, affine=True),
             act_fn,
             nn.Linear(self.hidden_size, c_dim + vector_c_dim),
         )
@@ -196,7 +185,7 @@ class EGNN(nn.Module):
                     self.hidden_size,
                     self.hidden_size,
                     self.hidden_size,
-                    edges_in_d=edge_dim,
+                    edges_in_d=2,
                     act_fn=act_fn,
                     residual=residual,
                     attention=attention,
@@ -222,7 +211,7 @@ class EGNN(nn.Module):
         # feature transform
         h, x, edges, edge_attr = self._transform(pc, node_tag)
         # embedding
-        h = self.embedding_in(h)  # (n_nodes, hidden_size)
+        h = self.scalar_embedding_in(h)  # (n_nodes, hidden_size)
         # message passing
         for i in range(0, self.n_layers):
             h, x, _ = self._modules[f"gcl_{i}"](h, edges, x, edge_attr=edge_attr)
@@ -234,12 +223,21 @@ class EGNN(nn.Module):
         # edge indices (knn)
         # batch index per node (avoid knn across graphs)
         edges = knn_graph(pc, self.n_neighbors, node_tag)
-        # scalar node features (norms)
-        h = torch.norm(pc, dim=-1, keepdim=True)
-        # vector node features (coordinates)
-        x = pc
-        # edge features (distance)
-        edge_attr = torch.norm(x[edges[0]] - x[edges[1]], dim=-1, keepdim=True)
+        snd, rcv = edges
+        displ = pc[snd] - pc[rcv]
+        distance = torch.norm(displ, dim=-1, keepdim=True)
+        directon = displ / (distance + self.eps)
+        # vector node features coordinates
+        loc = torch.norm(pc, dim=-1, keepdim=True)
+        x = pc / (loc + self.eps)
+        # scalar node features (location and density)
+        density = scatter(distance, snd, node_tag.shape[0], reduce="mean")[:, None]
+        h = torch.cat([loc, density], axis=-1)
+        # scalar edge features (distance and angle)
+        dist = torch.norm(displ, dim=-1, keepdim=True)
+        a = torch.sum(directon[edges[0]] * directon[edges[1]], dim=-1, keepdim=True)
+        angles = torch.acos(torch.clamp(a, -1 + self.eps, 1 - self.eps))
+        edge_attr = torch.cat([dist, angles], axis=-1)
         return h, x, edges, edge_attr
 
     def _readout(self, h, x, node_tag, batch_size):
@@ -252,7 +250,7 @@ class EGNN(nn.Module):
 
         mix = self.readout_mix_net(
             torch.cat([s_codes, torch.norm(v_codes, dim=-1, keepdim=True)], dim=-1)
-        )  # (c_dim + vector_c_dim)
+        )  # (bs * n_obj, c_dim + vector_c_dim)
         scalar_mix, vector_mix = torch.split(
             mix, [self.c_dim, self.vector_c_dim], dim=-1
         )
