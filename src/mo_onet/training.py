@@ -42,7 +42,7 @@ class Trainer(BaseTrainer):
         if vis_dir is not None and not os.path.exists(vis_dir):
             os.makedirs(vis_dir)
 
-    def train_step(self, data):
+    def train_step(self, data, val=False):
         """Performs a training step.
 
         Args:
@@ -64,6 +64,13 @@ class Trainer(BaseTrainer):
         # ).mean()
 
         loss = self.compute_loss(data, n_obj)
+
+        if loss < 0.005:
+            pass
+            
+        if not val:
+            loss.backward()
+            self.optimizer.step()
 
         return loss.item()
 
