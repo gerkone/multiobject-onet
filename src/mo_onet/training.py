@@ -65,7 +65,6 @@ class Trainer(BaseTrainer):
 
         loss = self.compute_loss(data, n_obj)
 
-
         return loss.item()
 
     def eval_step(self, data):

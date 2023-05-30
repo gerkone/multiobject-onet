@@ -192,6 +192,7 @@ class ObjectTagField(Field):
         points = self.point_field.load(model_path, idx, category)[None]
 
         import torch
+
         return torch.zeros(points.shape[0], dtype=torch.long)
 
         # return (

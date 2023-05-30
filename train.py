@@ -167,7 +167,9 @@ if __name__ == "__main__":
                 val_loss = trainer.train_step(next(iter(val_loader)), val=True)
                 t = datetime.datetime.now()
                 since = time.strftime("%H:%M:%S", time.gmtime((t - t0).total_seconds()))
-                print(f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}, val loss={val_loss:.3f}, time: {since}")
+                print(
+                    f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}, val loss={val_loss:.3f}, time: {since}"
+                )
 
             # TODO put back in
             # Visualize output
