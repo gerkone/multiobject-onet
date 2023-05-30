@@ -39,7 +39,7 @@ if __name__ == "__main__":
     is_cuda = torch.cuda.is_available() and not args.no_cuda
     device = torch.device("cuda" if is_cuda else "cpu")
     # Set t0
-    t0 = time.time()
+    t0 = datetime.datetime.now()
 
     # Shorthands
     out_dir = cfg["training"]["out_dir"]
@@ -155,18 +155,20 @@ if __name__ == "__main__":
 
     while True:
         epoch_it += 1
-
         for batch in train_loader:
+            # while True:
             it += 1
             loss = trainer.train_step(batch)
             logger.add_scalar("train/loss", loss, it)
+            # print(f"[{it}] {loss:.4f}")
 
             # Print output
             if print_every > 0 and (it % print_every) == 0:
+                val_loss = trainer.train_step(next(iter(val_loader)), val=True)
                 t = datetime.datetime.now()
+                since = time.strftime("%H:%M:%S", time.gmtime((t - t0).total_seconds()))
                 print(
-                    f"[Epoch {epoch_it}] it={it}, loss={loss:.3f}, "
-                    f"time: {time.time() - t0:.2f}s, {t.hour}:{t.minute:02d}"
+                    f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}, val loss={val_loss:.3f}, time: {since}"
                 )
 
             # TODO put back in
@@ -228,7 +230,7 @@ if __name__ == "__main__":
             #         )
 
             # # Exit if necessary
-            # if exit_after > 0 and (time.time() - t0) >= exit_after:
+            # if exit_after > 0 and (datetime.datetime.now() - t0) >= exit_after:
             #     print("Time limit reached. Exiting.")
             #     checkpoint_io.save(
             #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best

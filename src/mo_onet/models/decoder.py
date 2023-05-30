@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.layers import CBatchNorm1d, CResnetBlockConv1d, ResnetBlockFC
+from src.layers import CBatchNorm1d, CResnetBlockConv1d
 
 
 class E3Decoder(nn.Module):
-    """Equivariant Decoder network."""
+    """Equivariant Decoder network. UNSTABLE."""
 
     def __init__(
         self,
@@ -34,42 +34,49 @@ class E3Decoder(nn.Module):
         self.n_blocks = n_blocks
 
         for i in range(0, n_blocks):
-            self.add_module(f"block_{i}", ResnetBlockFC(hidden_size))
+            self.add_module(f"block_{i}", CResnetBlockConv1d(c_dim, hidden_size))
 
         self.readout = nn.Linear(hidden_size, 1)
 
     def forward(self, p, code, **kwargs):
-        n_obj, n_sample_points, _ = p.shape
-        scalar_c, vector_c = code
-        vector_c = vector_c.view(n_obj, self.vector_c_dim, 3).contiguous()
+        bs, n_sample_points, _ = p.shape
 
-        p2 = torch.sum(p * p, dim=2, keepdim=True)  # (n_obj, n_sample, 1)
+        scalar_c, vector_c = code
+
+        bs, n_obj, _ = scalar_c.shape
+        scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
+        vector_c = vector_c.view(bs * n_obj, self.vector_c_dim, 3).contiguous()
+
+        p2 = torch.sum(p * p, dim=2, keepdim=True)  # (bs * o_obj, n_sample, 1)
         x_code = torch.einsum(
             "omd,ond->omn", p, vector_c
-        )  # (n_obj, n_sample, vector_c_dim)
+        )  # (bs * o_obj, n_sample, vector_c_dim)
         inv_code = torch.sum(
             scalar_c * self.scalar_mix_in(scalar_c), dim=-1, keepdim=True
-        )  # (n_obj, 1)
-        inv_code = inv_code.repeat(1, n_sample_points).unsqueeze(
-            -1
-        )  # (n_obj, n_sample, 1)
+        )  # (bs * o_obj, 1)
+        inv_code = inv_code.repeat(1, n_sample_points)
+        inv_code = inv_code[..., None]  # (bs * o_obj, n_sample, 1)
         x = torch.cat(
             [p2, x_code, inv_code], dim=-1
-        )  # (n_obj, n_sample, vec_c_dim + 1 + 1)
+        )  # (bs * o_obj, n_sample, vec_c_dim + 1 + 1)
 
         # sample point embedding
-        x = self.point_emb(x)  # (n_obj, n_sample, hidden_size)
+        x = self.point_emb(x)
+        x = x.transpose(1, 2).contiguous()  # (bs * o_obj, hidden_size, n_sample)
 
         # resnet blocks
         for i in range(0, self.n_blocks):
-            x = self._modules[f"block_{i}"](x)
+            x = self._modules[f"block_{i}"](x, scalar_c)
+
+        x = x.transpose(1, 2).contiguous()  # (bs * o_obj, n_sample, hidden_size)
 
         # logit readout
-        occ = self.readout(F.silu(x)).squeeze(-1)  # (o_obj, n_sample)
+        occ = self.readout(F.silu(x)).squeeze(-1)  # (bs * o_obj, n_sample)
+        occ = occ.view(bs, n_obj, n_sample_points)  # (bs, o_obj, n_sample)
         return occ
 
 
-class DecoderCBatchNorm(nn.Module):
+class DecoderCBN(nn.Module):
     """Decoder with conditional batch normalization (CBN) class.
 
     Args:
