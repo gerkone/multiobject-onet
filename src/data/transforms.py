@@ -55,11 +55,11 @@ class SubsamplePointcloud(object):
         data_out["normals"] = normals[indices, :]
 
         if "semantics" in data and "node_tags" in data:
-            semantics = data["semantics"]            
-            node_tags = data["node_tags"]        
+            semantics = data["semantics"]
+            node_tags = data["node_tags"]
             data_out["semantics"] = semantics[indices]
             data_out["node_tags"] = node_tags[indices]
-        
+
         return data_out
 
 

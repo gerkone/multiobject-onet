@@ -171,7 +171,7 @@ def get_inputs_field(mode, cfg):
             cfg["data"]["item_file"],
             transform,
             multi_object=cfg["method"] == "mo_onet",
-            multi_files=cfg["data"]["multi_files"]
+            multi_files=cfg["data"]["multi_files"],
         )
     elif input_type == "partial_pointcloud":
         transform = transforms.Compose(

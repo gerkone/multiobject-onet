@@ -40,17 +40,19 @@ class E3Decoder(nn.Module):
 
     def forward(self, p, code, **kwargs):
         bs, n_sample_points, _ = p.shape
-
         scalar_c, vector_c = code
-
         bs, n_obj, _ = scalar_c.shape
+
+        p2 = torch.sum(p * p, dim=2, keepdim=True).repeat(
+            n_obj, 1, 1
+        )  # (bs * o_obj, n_sample, 1)
+        x_code = torch.einsum(
+            "bmd,bond->bomn", p, vector_c
+        )  # (bs, o_obj, n_sample, vector_c_dim)
+        x_code = x_code.reshape(bs * n_obj, n_sample_points, self.vector_c_dim).contiguous()
         scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
         vector_c = vector_c.view(bs * n_obj, self.vector_c_dim, 3).contiguous()
 
-        p2 = torch.sum(p * p, dim=2, keepdim=True)  # (bs * o_obj, n_sample, 1)
-        x_code = torch.einsum(
-            "omd,ond->omn", p, vector_c
-        )  # (bs * o_obj, n_sample, vector_c_dim)
         inv_code = torch.sum(
             scalar_c * self.scalar_mix_in(scalar_c), dim=-1, keepdim=True
         )  # (bs * o_obj, 1)

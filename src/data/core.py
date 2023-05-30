@@ -166,20 +166,26 @@ class Shapes3dDataset(data.Dataset):
             data["pointcloud_crop"] = True
         else:
             info = c_idx
-        
+
         fields = self.fields.copy()
-        points = self.load_field("points", fields["points"], data, model_path, idx, info, model)
+        points = self.load_field(
+            "points", fields["points"], data, model_path, idx, info, model
+        )
         fields.pop("points")
 
         for field_name, field in fields.items():
-            self.load_field(field_name, field, data, model_path, idx, info, model, points)
-        
+            self.load_field(
+                field_name, field, data, model_path, idx, info, model, points
+            )
+
         if self.transform is not None:
             data = self.transform(data)
-        
+
         return data
 
-    def load_field(self, field_name, field, data, model_path, idx, info, model, points=None):
+    def load_field(
+        self, field_name, field, data, model_path, idx, info, model, points=None
+    ):
         try:
             if field_name == "inputs":
                 field_data = field.load(model_path, idx, info, points)

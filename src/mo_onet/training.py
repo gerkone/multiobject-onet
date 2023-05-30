@@ -51,23 +51,28 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
-        # ensure same number of objects per batch
-        n_obj = 4  # batch has items from the dataset, can have 4-8 objcets per item
-        # assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."  # TODO: revisit
-
-        # vmap over batch size
-        # n_obj = n_obj[0] + 1
+        bs = data["points"].shape[0]
+        same_n_obj = all(
+            data["inputs.node_tags"][i].unique().shape[0]
+            == data["inputs.node_tags"][0].unique().shape[0]
+            for i in range(bs)
+        )
+        
+        # filter elements with different number of objects
+        mask = [data["inputs.node_tags"][i].unique().shape[0] == 4 for i in range(bs)]
+        if not any(mask):
+            return 0.0
+        batch = {k: v[mask] for k, v in data.items()}
+        loss = self.compute_loss(batch)
 
         # TODO (GAL) vmap is very slow right now. Try to go back to batching
         # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
         #     data, n_obj
         # ).mean()
 
-        loss = self.compute_loss(data, n_obj)
-
         if loss < 0.005:
             pass
-            
+
         if not val:
             loss.backward()
             self.optimizer.step()
@@ -142,7 +147,7 @@ class Trainer(BaseTrainer):
 
         return eval_dict
 
-    def compute_loss(self, data, n_obj):
+    def compute_loss(self, data):
         """Computes the loss.
 
         Args:
@@ -151,9 +156,10 @@ class Trainer(BaseTrainer):
         device = self.device
         p = data.get("points").to(device)
         target_occ = data.get("points.occ").to(device)  # (bs, n_points,)
+        node_occs = data.get("inputs.node_occs").to(device)  # (bs, n_obj, n_points)
+
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        node_tag = data.get("inputs.node_tags").to(device)
-        node_occs = data.get("inputs.node_occs").to(device)  # TODO: GG - here is the (n_obj, occ)
+        node_tag = data.get("inputs.node_tags").to(device) # (bs, pc)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -171,12 +177,16 @@ class Trainer(BaseTrainer):
         # encoder
         codes = self.model.encode_multi_object(inputs, node_tag)
 
-        pred_occ = self.model.decode_multi_object(p, codes)  # (bs, total_n_points,)
+        pred_occ = self.model.decode_multi_object(p, codes)  # (bs, n_obj, total_n_points)
 
-        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, target_occ, reduction="mean"
+        object_reconstruction_loss = (
+            F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
+            # average over points
+            .mean(-1)
+            # sum over objects
+            .sum(-1)
         )
-
-        total_loss = scene_reconstruction_loss
+        # average over batch
+        total_loss = object_reconstruction_loss.mean(0)
 
         return total_loss

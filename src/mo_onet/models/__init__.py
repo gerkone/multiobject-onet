@@ -70,11 +70,16 @@ class MultiObjectONet(nn.Module):
             node_tag (tensor): the node-wise instance tag (bs, n_points)
         """
         bs = pc.shape[0]
-        n_obj = node_tag.max() + 1
-        # add batch offset to node_tag
+        # replace node tags with object indices
+        obj_node_tag = torch.zeros_like(node_tag)
+        for b in range(bs):
+            for i, tag in enumerate(node_tag[b].unique()):
+                obj_node_tag[b][node_tag[b] == tag] = i
+        n_obj = obj_node_tag.max() + 1
+        # add batch offset to obj_node_tag
         batch_offset = torch.arange(0, bs, device=pc.device)[:, None] * n_obj
-        node_tag = node_tag + batch_offset
-        codes = self.encoder(pc, node_tag)  # (bs, n_obj, c_dim)
+        obj_node_tag = obj_node_tag + batch_offset
+        codes = self.encoder(pc, obj_node_tag)  # (bs, n_obj, c_dim)
         return codes
 
     def segment_to_single_graphs(self, pc):
@@ -99,16 +104,19 @@ class MultiObjectONet(nn.Module):
         Returns:
             p_r (tensor): scene occupancy probs
         """
-        # TODO should operate everywhere in unit cube right?
-        logits = self.decoder(p, codes, **kwargs)  # (bs * n_obj, n_sample_points)
-        # sum over objects in prob space
-        # probs = logits_to_probs(logits, is_binary=True)
-        # total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points,)
-        # total_probs = (total_probs - total_probs.min()) / (total_probs.max() - total_probs.min())
-        # total_logits = probs_to_logits(total_probs, is_binary=True)
-        total_logits = torch.sum(logits, dim=1)
+        obj_logits = self.decoder(p, codes, **kwargs)  # (bs * n_obj, n_sample_points)
         if self.training:
-            return total_logits
+            # return object-wise logits
+            return obj_logits
+        # sum over objects in prob space
+        probs = logits_to_probs(obj_logits, is_binary=True)
+        total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points,)
+        # normalize
+        total_probs = (total_probs - total_probs.min()) / (
+            total_probs.max() - total_probs.min()
+        )
+        total_logits = probs_to_logits(total_probs, is_binary=True)
+        total_logits = torch.sum(obj_logits, dim=1)
         return dist.Bernoulli(logits=total_logits)
 
     def build_scene_metadata(self, node_tag):

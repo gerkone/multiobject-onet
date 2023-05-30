@@ -304,7 +304,14 @@ class PointCloudField(Field):
         multi_files (callable): number of files
     """
 
-    def __init__(self, point_file_name, item_file_name, transform=None, multi_files=None, multi_object=None):
+    def __init__(
+        self,
+        point_file_name,
+        item_file_name,
+        transform=None,
+        multi_files=None,
+        multi_object=None,
+    ):
         self.point_file_name = point_file_name
         self.item_file_name = item_file_name
         self.transform = transform
@@ -324,11 +331,12 @@ class PointCloudField(Field):
         else:
             num = np.random.randint(self.multi_files)
             file_path = os.path.join(
-                model_path, self.point_file_name, "%s_%02d.npz" % (self.point_file_name, num)
+                model_path,
+                self.point_file_name,
+                "%s_%02d.npz" % (self.point_file_name, num),
             )
-        
-        pointcloud_dict = np.load(file_path)
 
+        pointcloud_dict = np.load(file_path)
 
         points = pointcloud_dict["points"].astype(np.float32)
         normals = pointcloud_dict["normals"].astype(np.float32)
@@ -340,13 +348,13 @@ class PointCloudField(Field):
 
         if self.multi_object:
             semantics = pointcloud_dict["semantics"].astype(np.int64)
+            data["semantics"] = semantics.copy().astype(np.int32)
 
             item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
             item_dict = np.load(item_file_path, allow_pickle=True)
 
             bboxes = get_bboxes(item_dict["bboxes"], item_dict["xz_groundplane_range"])
             segmented, bboxes3d = segment_objects(points, semantics, bboxes)
-            data["semantics"] = semantics.astype(np.int32)
             data["node_tags"] = segmented.astype(np.int32)
 
             points_iou_pc = points_iou[None]
