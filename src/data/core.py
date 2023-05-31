@@ -298,7 +298,6 @@ def collate_remove_none(batch):
         batch: batch
     """
     batch = list(filter(lambda x: x is not None, batch))
-    # print("COLLATE", batch)
     return data.dataloader.default_collate(batch)
 
 

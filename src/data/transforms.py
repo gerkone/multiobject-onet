@@ -83,6 +83,7 @@ class SubsamplePoints(object):
         """
         points = data[None]
         occ = data["occ"]
+        semantics = data["semantics"]
 
         data_out = data.copy()
         if isinstance(self.N, int):
@@ -91,6 +92,7 @@ class SubsamplePoints(object):
                 {
                     None: points[idx, :],
                     "occ": occ[idx],
+                    "semantics": semantics[idx]
                 }
             )
         else:

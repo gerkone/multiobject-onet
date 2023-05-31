@@ -2,7 +2,7 @@ method: mo_onet
 data:
   input_type: pointcloud
   classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
-  path: /ssd/train_may_44_skachat_besplatno/synthetic/synthetic_room_dataset
+  path: /ssd/train_may_44_skachat_besplatno/synthetic_0405
   pointcloud_n: 1000 # 5000 is probably a reasonable number for real training
   pointcloud_noise: 0.001
   points_subsample: 2048

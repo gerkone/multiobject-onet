@@ -9,7 +9,7 @@ from sklearn.cluster import KMeans
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
-from src.utils.segment import get_bboxes, segment_objects, separate_occ
+from src.utils.segment import get_bboxes, segment_objects, separate_occ, separate_occ_sm
 
 
 class IndexField(Field):
@@ -81,6 +81,8 @@ class PatchPointsField(Field):
         if self.unpackbits:
             occupancies = np.unpackbits(occupancies)[: points.shape[0]]
         occupancies = occupancies.astype(np.float32)
+        
+        semantics = points_dict["semantics"]
 
         # acquire the crop
         ind_list = []
@@ -93,6 +95,7 @@ class PatchPointsField(Field):
         data = {
             None: points[ind],
             "occ": occupancies[ind],
+            "semantics": semantics[ind]
         }
 
         if self.transform is not None:
@@ -155,9 +158,13 @@ class PointsField(Field):
             occupancies = np.unpackbits(occupancies)[: points.shape[0]]
         occupancies = occupancies.astype(np.float32)
 
+        semantics = points_dict["semantics"]
+
+
         data = {
             None: points,
             "occ": occupancies,
+            "semantics": semantics
         }
 
         if self.transform is not None:
@@ -359,8 +366,10 @@ class PointCloudField(Field):
 
             points_iou_pc = points_iou[None]
             points_iou_occ = points_iou["occ"]
-            segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
-            data["node_occs"] = segmented_occ  # issue here with n_objects
+            points_iou_sem = points_iou["semantics"]
+            # segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
+            segmented_occ, sem = separate_occ_sm(points_iou_occ, points_iou_sem)
+            data["node_occs"] = segmented_occ
 
         if self.transform is not None:
             data = self.transform(data)
