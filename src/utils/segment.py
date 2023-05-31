@@ -18,18 +18,14 @@ def get_bboxes(bbox_array, xz_groundplane_range):
 
 
 def segment_objects(points, semantics, bboxes, eps=0.007):
+    sem = semantics.copy()
     mask = semantics == -1
-    walls = points[mask]
     no_walls = points[~mask]
     no_walls_i = np.squeeze(np.argwhere(semantics != -1))
     sem_i = semantics[~mask]
 
-    segmented_pts = []
     segmented_semantics = []
     bboxes_3d = []
-
-    segmented_pts.append(walls)  # 1st segment is for the walls
-    segmented_semantics.append(-1)
 
     for bbox_idx, bbox in enumerate(bboxes):
         bottom_left_x = bbox[0][0]
@@ -54,17 +50,25 @@ def segment_objects(points, semantics, bboxes, eps=0.007):
 
             sem_i[mask] = bbox_idx + sem_i[mask] * 10
             bboxes_3d.append((min_coordinates, max_coordinates))
-    semantics[no_walls_i] = sem_i
+            segmented_semantics.append(sem_i[mask][0])
+    sem[no_walls_i] = sem_i
+    segmented_semantics.append(-1)  # walls
 
-    return semantics, bboxes_3d
+    return sem, bboxes_3d, segmented_semantics
 
-
-def separate_occ(points, occupancy, bboxes3d, eps=0.007, N=4):
-    seg_occs = np.tile(np.expand_dims(occupancy, 0), (N, 1))
+def separate_occ(points, occupancy, bboxes3d, eps = 0.00, N=4):
+    k = len(bboxes3d)
+    seg_occs = np.zeros((N+1, occupancy.shape[0]))
+    print(seg_occs.shape, k)
+    seg_occs[:k+1] += occupancy
+    print(k+1, np.sum(occupancy), np.sum(seg_occs))
     for i, bbox in enumerate(bboxes3d):
         mask_x = (points[:, 0] >= bbox[0][0] - eps) & (points[:, 0] <= bbox[1][0] + eps)
         mask_y = (points[:, 1] >= bbox[0][1] - eps) & (points[:, 0] <= bbox[1][1] + eps)
         mask_z = (points[:, 2] >= bbox[0][2] - eps) & (points[:, 0] <= bbox[1][2] + eps)
         mask = mask_x & mask_y & mask_z
-        seg_occs[i][~mask] = 0
+        seg_occs[i][~mask] = 0.0
+    no_wall = np.sum(seg_occs[:k], axis=0)
+    seg_occs[k][no_wall > 0] = 0
+    
     return np.stack(seg_occs, axis=0)
