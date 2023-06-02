@@ -59,7 +59,8 @@ class Trainer(BaseTrainer):
         )
         
         # filter elements with different number of objects
-        mask = [data["inputs.node_tags"][i].unique().shape[0] == 4 for i in range(bs)]
+        mask = [data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)]
+        print("mask\n", mask)
         if not any(mask):
             return 0.0
         batch = {k: v[mask] for k, v in data.items()}

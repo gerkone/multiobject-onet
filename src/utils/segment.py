@@ -55,6 +55,9 @@ def segment_objects(points, semantics, bboxes, eps=0.007):
     segmented_semantics.append(-1)  # walls
     return sem, bboxes_3d
 
+def segment_objects_sm(semantics):
+    return semantics + 1  # for having nodes 0-5
+
 def separate_occ(points, occupancy, bboxes3d, eps = 0.00, N=4):
     k = len(bboxes3d)
     seg_occs = np.zeros((N+1, occupancy.shape[0]))
@@ -71,12 +74,13 @@ def separate_occ(points, occupancy, bboxes3d, eps = 0.00, N=4):
     
     return np.stack(seg_occs, axis=0)
 
-def separate_occ_sm(occupancy, sem, N=5):
-    tags = np.unique(sem)
-    seg_occs = np.zeros((N + 1, occupancy.shape[0]))  # +1 for wall; +1 for "empty"
+def separate_occ_sm(sem, N=4):
+    tags = np.sort(np.unique(sem))
+    seg_occs = np.zeros((N + 1, sem.shape[0]))  # +1 for wall
     sems = []
     for i, label in enumerate(tags):
-        mask = sem == label
-        seg_occs[i][mask] = 1.0
-        sems.append(label)
+        if label < 5:
+            mask = sem == label
+            seg_occs[i][mask] = 1.0
+            sems.append(label)
     return seg_occs, np.stack(sems, axis=0)
