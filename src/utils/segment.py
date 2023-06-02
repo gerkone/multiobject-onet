@@ -82,5 +82,5 @@ def separate_occ_sm(sem, N=4):
         if label < 5:
             mask = sem == label
             seg_occs[i][mask] = 1.0
-            sems.append(label)
+            sems.append(label+1)
     return seg_occs, np.stack(sems, axis=0)
