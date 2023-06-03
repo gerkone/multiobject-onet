@@ -9,7 +9,13 @@ from sklearn.cluster import KMeans
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
-from src.utils.segment import get_bboxes, segment_objects, separate_occ, separate_occ_sm, segment_objects_sm
+from src.utils.segment import (
+    get_bboxes,
+    segment_objects,
+    separate_occ,
+    separate_occ_sm,
+    segment_objects_sm,
+)
 
 
 class IndexField(Field):
@@ -361,8 +367,7 @@ class PointCloudField(Field):
             points_iou_sem = points_iou["semantics"]
             # segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
             segmented_occ, sem = separate_occ_sm(points_iou_sem)
-            data["node_occs"] = segmented_occ # N, occ_points
-
+            data["node_occs"] = segmented_occ  # N, occ_points
 
         if self.transform is not None:
             data = self.transform(data)
