@@ -1,14 +1,15 @@
 import torch
 import torch.nn as nn
 from torch import distributions as dist
-from torch.distributions.utils import probs_to_logits, logits_to_probs
+from torch.distributions.utils import logits_to_probs
 
-
+from src.encoder.gconv import MOGConv
 from src.mo_onet.models import decoder, segmenter
 
 decoder_dict = {
     "e3_decoder": decoder.E3Decoder,
-    "cbn_decoder": decoder.DecoderCBN,
+    "cbn_decoder": decoder.CBNDecoder,
+    "dgcnn": decoder.DGCNNDecoder,
 }
 
 segmenter_dict = {
@@ -22,16 +23,18 @@ class MultiObjectONet(nn.Module):
     Args:
         decoder (nn.Module): decoder network
         segmenter (nn.Module): segmentation network
-        encoder (nn.Module): encoder network
+        object_encoder (nn.Module): object-wise encoder network
+        scene_encoder (nn.Module): scene encoder network
         device (device): torch device
     """
 
-    def __init__(self, decoder, segmenter, encoder, device=None):
+    def __init__(self, decoder, segmenter, object_encoder, device=None):
         super().__init__()
 
         self.decoder = decoder.to(device)
         self.segmenter = segmenter.to(device)
-        self.encoder = encoder.to(device)
+        self.object_encoder = object_encoder.to(device)
+        self.scene_encoder = MOGConv(c_dim=8, hidden_size=32, n_neighbors=-1).to(device)
 
         self._device = device
 
@@ -44,11 +47,10 @@ class MultiObjectONet(nn.Module):
 
         Returns:
             p_r (tensor): predicted occupancy values (n_sample_points)
-            scene_metadata (dict): scene metadata for scene building
         """
-        codes, scene_metadata = self.encode_and_segment(pc)
+        codes, _ = self.encode_and_segment(pc)
         p_r = self.decode_multi_object(q, codes, **kwargs)
-        return p_r, scene_metadata
+        return p_r
 
     def encode_and_segment(self, pc):
         """Encodes and segments the input.
@@ -57,10 +59,9 @@ class MultiObjectONet(nn.Module):
             pc (tensor): the input point cloud (n_points, 3)
         Returns:
             codes (list): list of latent conditioned codes
-            scene_metadata (dict): scene metadata for scene building
         """
-        node_tag, scene_metadata = self.segment_to_single_graphs(pc)
-        return self.encode_multi_object(pc, node_tag), scene_metadata
+        node_tag = self.segment_to_single_graphs(pc)
+        return self.encode_multi_object(pc, node_tag)
 
     def encode_multi_object(self, pc, node_tag):
         """Encodes the input.
@@ -69,18 +70,35 @@ class MultiObjectONet(nn.Module):
             pc (tensor): the input point cloud (bs, n_points, 3)
             node_tag (tensor): the node-wise instance tag (bs, n_points)
         """
-        bs = pc.shape[0]
-        # replace node tags with object indices
-        obj_node_tag = torch.zeros_like(node_tag)
+        bs = node_tag.shape[0]
+        obj_node_tag = torch.zeros_like(node_tag, dtype=torch.long)
         for b in range(bs):
             for i, tag in enumerate(node_tag[b].unique()):
                 obj_node_tag[b][node_tag[b] == tag] = i
         n_obj = obj_node_tag.max() + 1
         # add batch offset to obj_node_tag
-        batch_offset = torch.arange(0, bs, device=pc.device)[:, None] * n_obj
-        obj_node_tag = obj_node_tag + batch_offset
-        codes = self.encoder(pc, obj_node_tag)  # (bs, n_obj, c_dim)
-        return codes
+        batch_offset = (torch.arange(0, bs, device=pc.device)[:, None] * n_obj).long()
+        obj_batch = obj_node_tag + batch_offset
+
+        # objec-wise encoding
+        obj_codes = self.object_encoder(pc, obj_batch)  # (bs, n_obj, obj_c_dim)
+
+        # TODO GAL scene encoder from bboxes
+
+        # scene_batch = torch.arange(0, bs, device=pc.device)[:, None].repeat(1, n_obj)
+        # # full codes = object codes + scene code
+        # n_nodes = obj_codes[0].shape[1]
+        # if isinstance(obj_codes, tuple):
+        #     codes = (
+        #         torch.cat([obj_codes[0], scene_code.repeat(1, n_nodes, 1)], dim=-1),
+        #         obj_codes[1],
+        #     )
+        # else:
+        #     codes = torch.cat([obj_codes, scene_code.repeat(1, n_obj, 1)], dim=-1)
+
+        codes = obj_codes
+
+        return codes, obj_batch
 
     def segment_to_single_graphs(self, pc):
         """Segments the input point cloud into single shapes.
@@ -89,11 +107,9 @@ class MultiObjectONet(nn.Module):
             pc (tensor): the input point cloud (n_points, 3)
         Returns:
             node_tag (tensor): the node-wise instance tag (n_points,)
-            scene_metadata (dict): scene metadata for scene building
         """
         node_tags, _ = self.segmenter(pc)
-        scene_metadata = self.build_scene_metadata(node_tags)
-        return node_tags, scene_metadata
+        return node_tags
 
     def decode_multi_object(self, p, codes, **kwargs):
         """Returns full scene occupancy probabilities for the sampled points.
@@ -110,28 +126,9 @@ class MultiObjectONet(nn.Module):
             return obj_logits
         # sum over objects in prob space
         probs = logits_to_probs(obj_logits, is_binary=True)
-        total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points,)
+        total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points)
         # normalize
         total_probs = (total_probs - total_probs.min()) / (
             total_probs.max() - total_probs.min()
         )
-        total_logits = probs_to_logits(total_probs, is_binary=True)
-        total_logits = torch.sum(obj_logits, dim=1)
-        return dist.Bernoulli(logits=total_logits)
-
-    def build_scene_metadata(self, node_tag):
-        """Builds scene metadata for scene building.
-
-        Args:
-            node_tag (tensor): node integer tag (n_points,)
-
-        Returns:
-            scene_metadata (dict): a Dict containing number of objects, barycenters
-                positions and normalization params.
-        """
-        # TODO get scene builder metadata from node_tag and pc
-        return {
-            "n_objects": None,
-            "barycenters": None,
-            "normalization_params": None,
-        }
+        return dist.Bernoulli(probs=total_probs)

@@ -95,17 +95,19 @@ class MOGConv(nn.Module):
 
         self.readout = nn.Conv1d(hidden_size, c_dim, kernel_size=1, bias=True)
 
-    def forward(self, x, node_tag):
+    def forward(self, pc, node_tag):
         """MOGConv forward.
 
         Args:
             x (torch.Tensor): Point cloud (bs, n_nodes, 3)
             node_tag (torch.Tensor): Node tag index for aggregation (bs, n_nodes)
         """
-        bs, n_nodes, _ = x.shape
+        bs, n_nodes, _ = pc.shape
         n_obj = node_tag[0].max().item() + 1
-        x = x.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
         node_tag = node_tag.view(-1)  # (bs * n_nodes,)
+
+        x = pc.clone()
+        x = x.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
 
         k = self.n_neighbors
 
@@ -155,21 +157,21 @@ class MOGConv(nn.Module):
 
         # readout to global code
         code = self.readout(x1).permute(1, 0)  # (bs * n_nodes, c_dim)
+        codes = code.view(bs, n_nodes, -1)  # (bs, n_nodes, c_dim)
         # collect codes on objects
-        codes = scatter(code, node_tag.long(), bs * n_obj, "mean")  # (n_obj, c_dim)
-        codes = codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
-        return codes
+        # codes = scatter(code, node_tag.long(), bs * n_obj, "mean")  # (n_obj, c_dim)
+        # codes = codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
+
+        return codes, pc
 
     def _transform(self, x, k, batch):
         with torch.no_grad():
-            idx = knn_graph(x, k, batch)[0]
+            if self.n_neighbors != -1:
+                idx = knn_graph(x, k, batch)[0]
+            else:
+                # fully connected
+                idx = torch.arange(x.shape[0]).repeat(x.shape[0], 1).flatten()
+        idx = idx.to(x.device)
 
         feature = x[idx].view(x.shape[1], idx.shape[0], 1)
         return feature, idx
-
-
-# TODO (GAL) wip
-
-
-class MOE3GConv(MOGConv):
-    pass

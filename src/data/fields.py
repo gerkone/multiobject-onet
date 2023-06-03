@@ -81,7 +81,7 @@ class PatchPointsField(Field):
         if self.unpackbits:
             occupancies = np.unpackbits(occupancies)[: points.shape[0]]
         occupancies = occupancies.astype(np.float32)
-        
+
         semantics = points_dict["semantics"]
 
         # acquire the crop
@@ -92,11 +92,7 @@ class PatchPointsField(Field):
                 & (points[:, i] <= vol["query_vol"][1][i])
             )
         ind = ind_list[0] & ind_list[1] & ind_list[2]
-        data = {
-            None: points[ind],
-            "occ": occupancies[ind],
-            "semantics": semantics[ind]
-        }
+        data = {None: points[ind], "occ": occupancies[ind], "semantics": semantics[ind]}
 
         if self.transform is not None:
             data = self.transform(data)
@@ -160,12 +156,7 @@ class PointsField(Field):
 
         semantics = points_dict["semantics"]
 
-
-        data = {
-            None: points,
-            "occ": occupancies,
-            "semantics": semantics
-        }
+        data = {None: points, "occ": occupancies, "semantics": semantics}
 
         if self.transform is not None:
             data = self.transform(data)

@@ -89,11 +89,7 @@ class SubsamplePoints(object):
         if isinstance(self.N, int):
             idx = np.random.randint(points.shape[0], size=self.N)
             data_out.update(
-                {
-                    None: points[idx, :],
-                    "occ": occ[idx],
-                    "semantics": semantics[idx]
-                }
+                {None: points[idx, :], "occ": occ[idx], "semantics": semantics[idx]}
             )
         else:
             Nt_out, Nt_in = self.N

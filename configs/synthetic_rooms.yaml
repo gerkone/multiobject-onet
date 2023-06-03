@@ -2,8 +2,8 @@ method: mo_onet
 data:
   input_type: pointcloud
   classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
-  path: /ssd/train_may_44_skachat_besplatno/synthetic_0405
-  pointcloud_n: 1000 # 5000 is probably a reasonable number for real training
+  path: /local/disk1/gg/data/synthetic_0405
+  pointcloud_n: 5000
   pointcloud_noise: 0.001
   points_subsample: 2048
   points_file: points_iou
@@ -16,23 +16,23 @@ data:
 model:
   encoder: egnn
   encoder_kwargs:
-    hidden_size: 128
+    hidden_size: 32
     n_layers: 4
-    n_neighbors: 20
-    instance_norm: True
+    n_neighbors: 30
+    # instance_norm: False
     # attention: False
-  decoder: e3_decoder      
+  decoder: cbn_decoder      
   decoder_kwargs:
-    hidden_size: 128
+    hidden_size: 64
     n_blocks: 4
   segmenter: segmenter
   segmenter_kwargs: {}
-  c_dim: 64
+  c_dim: 16
 training:
   out_dir:  out/default
-  batch_size: 8
-  learning_rate: 0.0001
-  print_every: 20
+  batch_size: 6
+  learning_rate: 0.0005
+  print_every: 5
   visualize_every: 1000
   checkpoint_every: 1000
   validate_every: 2000

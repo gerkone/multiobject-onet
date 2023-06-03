@@ -57,7 +57,7 @@ class Trainer(BaseTrainer):
             == data["inputs.node_tags"][0].unique().shape[0]
             for i in range(bs)
         )
-        
+
         # filter elements with different number of objects
         mask = [data["inputs.node_tags"][i].unique().shape[0] == 4 for i in range(bs)]
         if not any(mask):
@@ -159,7 +159,7 @@ class Trainer(BaseTrainer):
         node_occs = data.get("inputs.node_occs").to(device)  # (bs, n_obj, n_points)
 
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        node_tag = data.get("inputs.node_tags").to(device) # (bs, pc)
+        node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -175,18 +175,30 @@ class Trainer(BaseTrainer):
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
 
         # encoder
-        codes = self.model.encode_multi_object(inputs, node_tag)
+        codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
 
-        pred_occ = self.model.decode_multi_object(p, codes)  # (bs, n_obj, total_n_points)
+        pred_occ = self.model.decode_multi_object(
+            p, codes, node_tag=obj_batch
+        )  # (bs, n_obj, total_n_points)
+
+        pass
 
         object_reconstruction_loss = (
-            F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
+            F.binary_cross_entropy_with_logits(
+                pred_occ, node_occs[:, :-2], reduce=False
+            )
             # average over points
             .mean(-1)
             # sum over objects
             .sum(-1)
         )
+
+        # scene_reconstruction_loss = F.binary_cross_entropy_with_logits(pred_occ.sum(1), target_occ)
+
+        scene_reconstruction_loss = F.binary_cross_entropy(
+            F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
+        )
         # average over batch
-        total_loss = object_reconstruction_loss.mean(0)
+        total_loss = scene_reconstruction_loss + object_reconstruction_loss.mean(0)
 
         return total_loss
