@@ -60,7 +60,7 @@ class Trainer(BaseTrainer):
 
         # filter elements with different number of objects
         mask = [data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)]
-        print("mask\n", mask)
+        # print("mask\n", mask)
         if not any(mask):
             return 0.0
         batch = {k: v[mask] for k, v in data.items()}
@@ -182,12 +182,9 @@ class Trainer(BaseTrainer):
             p, codes, node_tag=obj_batch
         )  # (bs, n_obj, total_n_points)
 
-        pass
 
         object_reconstruction_loss = (
-            F.binary_cross_entropy_with_logits(
-                pred_occ, node_occs[:, :-2], reduce=False
-            )
+            F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
             # average over points
             .mean(-1)
             # sum over objects

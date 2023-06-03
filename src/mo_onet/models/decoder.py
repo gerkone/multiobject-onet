@@ -14,7 +14,6 @@ class E3Decoder(nn.Module):
     def __init__(
         self,
         c_dim=32,
-        vector_c_dim=4,
         n_blocks=2,
         hidden_size=64,
     ):
@@ -29,10 +28,9 @@ class E3Decoder(nn.Module):
         super().__init__()
 
         self.c_dim = c_dim
-        self.vector_c_dim = vector_c_dim
 
         self.scalar_mix_in = nn.Linear(c_dim, c_dim)
-        self.point_emb = nn.Linear(vector_c_dim + 1 + 1, hidden_size)
+        self.point_emb = nn.Linear(1 + 1 + 1, hidden_size)
 
         self.n_blocks = n_blocks
 
@@ -50,13 +48,13 @@ class E3Decoder(nn.Module):
             n_obj, 1, 1
         )  # (bs * o_obj, n_sample, 1)
         x_code = torch.einsum(
-            "bmd,bond->bomn", p, vector_c
-        )  # (bs, o_obj, n_sample, vector_c_dim)
+            "bmd,bod->bom", p, vector_c
+        )  # (bs, o_obj, n_sample)
         x_code = x_code.reshape(
-            bs * n_obj, n_sample_points, self.vector_c_dim
+            bs * n_obj, n_sample_points, -1
         ).contiguous()
         scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
-        vector_c = vector_c.view(bs * n_obj, self.vector_c_dim, 3).contiguous()
+        vector_c = vector_c.view(bs * n_obj, 1, 3).contiguous()
 
         inv_code = torch.sum(
             scalar_c * self.scalar_mix_in(scalar_c), dim=-1, keepdim=True
@@ -65,7 +63,7 @@ class E3Decoder(nn.Module):
         inv_code = inv_code[..., None]  # (bs * o_obj, n_sample, 1)
         x = torch.cat(
             [p2, x_code, inv_code], dim=-1
-        )  # (bs * o_obj, n_sample, vec_c_dim + 1 + 1)
+        )  # (bs * o_obj, n_sample, 1 + 1 + 1)
 
         # sample point embedding
         x = self.point_emb(x)

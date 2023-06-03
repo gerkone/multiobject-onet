@@ -21,7 +21,7 @@ model:
     n_neighbors: 30
     # instance_norm: False
     # attention: False
-  decoder: cbn_decoder      
+  decoder: e3_decoder      
   decoder_kwargs:
     hidden_size: 64
     n_blocks: 4
