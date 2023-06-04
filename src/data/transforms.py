@@ -54,6 +54,12 @@ class SubsamplePointcloud(object):
         data_out[None] = points[indices, :]
         data_out["normals"] = normals[indices, :]
 
+        if "semantics" in data and "node_tags" in data:
+            semantics = data["semantics"]
+            node_tags = data["node_tags"]
+            data_out["semantics"] = semantics[indices]
+            data_out["node_tags"] = node_tags[indices]
+
         return data_out
 
 
@@ -77,15 +83,13 @@ class SubsamplePoints(object):
         """
         points = data[None]
         occ = data["occ"]
+        semantics = data["semantics"]
 
         data_out = data.copy()
         if isinstance(self.N, int):
             idx = np.random.randint(points.shape[0], size=self.N)
             data_out.update(
-                {
-                    None: points[idx, :],
-                    "occ": occ[idx],
-                }
+                {None: points[idx, :], "occ": occ[idx], "semantics": semantics[idx]}
             )
         else:
             Nt_out, Nt_in = self.N

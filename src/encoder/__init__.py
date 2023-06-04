@@ -7,5 +7,4 @@ encoder_dict = {
     "voxel_simple_local": voxels.LocalVoxelEncoder,
     "egnn": egnn.EGNN,
     "gconv": gconv.MOGConv,
-    "e3_gconv": gconv.MOE3GConv,
 }

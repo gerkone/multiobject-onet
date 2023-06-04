@@ -136,8 +136,6 @@ class CBatchNorm1d(nn.Module):
         nn.init.zeros_(self.conv_mix.bias)
 
     def forward(self, x, c):
-        assert c.size(-1) == self.c_dim
-
         if len(c.size()) == 2:
             c = c.unsqueeze(2)
 
@@ -146,13 +144,13 @@ class CBatchNorm1d(nn.Module):
         beta = self.conv_beta(c)
 
         # break object-wise symmetry
-        # mix = self.conv_mix(c)  # (bs, f_dim, 1)
+        mix = self.conv_mix(c)  # (bs, f_dim, 1)
 
         # TODO (GAL): fix shapes with batch here
 
         # Batchnorm
         x = self.bn(x)
-        out = gamma * x + beta  # * mix  # (bs * n_obj, f_dim, n_points)
+        out = (gamma * x + beta) * mix  # (bs * n_obj, f_dim, n_points)
         return out
 
 

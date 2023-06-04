@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         num_workers=cfg["training"]["n_workers_val"],
         shuffle=False,
         collate_fn=data.collate_remove_none,
@@ -86,33 +86,35 @@ if __name__ == "__main__":
 
     # TODO put back in
     # For visualizations
-    # vis_loader = torch.utils.data.DataLoader(
-    #     val_dataset,
-    #     batch_size=1,
-    #     shuffle=False,
-    #     collate_fn=data.collate_remove_none,
-    #     worker_init_fn=data.worker_init_fn,
-    # )
-    # model_counter = defaultdict(int)
-    # data_vis_list = []
+    vis_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=data.collate_remove_none,
+        worker_init_fn=data.worker_init_fn,
+    )
+    model_counter = defaultdict(int)
+    data_vis_list = []
 
-    # # Build a data dictionary for visualization
-    # iterator = iter(vis_loader)
-    # for i in range(len(vis_loader)):
-    #     data_vis = next(iterator)
-    #     idx = data_vis["idx"].item()
-    #     model_dict = val_dataset.get_model_dict(idx)
-    #     category_id = model_dict.get("category", "n/a")
-    #     category_name = val_dataset.metadata[category_id].get("name", "n/a")
-    #     category_name = category_name.split(",")[0]
-    #     if category_name == "n/a":
-    #         category_name = category_id
+    # Build a data dictionary for visualization
+    iterator = iter(vis_loader)
+    for i in range(len(vis_loader)):
+        data_vis = next(iterator)
+        idx = data_vis["idx"].item()
+        model_dict = val_dataset.get_model_dict(idx)
+        category_id = model_dict.get("category", "n/a")
+        category_name = val_dataset.metadata[category_id].get("name", "n/a")
+        category_name = category_name.split(",")[0]
+        if category_name == "n/a":
+            category_name = category_id
 
-    #     c_it = model_counter[category_id]
-    #     if c_it < vis_n_outputs:
-    #         data_vis_list.append({"category": category_name, "it": c_it, "data": data_vis})
+        c_it = model_counter[category_id]
+        if c_it < vis_n_outputs:
+            data_vis_list.append(
+                {"category": category_name, "it": c_it, "data": data_vis}
+            )
 
-    #     model_counter[category_id] += 1
+        model_counter[category_id] += 1
 
     # Model
     model = config.get_model(cfg, device=device, dataset=train_dataset)
@@ -153,86 +155,100 @@ if __name__ == "__main__":
 
     print(f"output path: {cfg['training']['out_dir']}")
 
+    losses = []
     while True:
         epoch_it += 1
-        for batch in train_loader:
-            # while True:
-            it += 1
-            loss = trainer.train_step(batch)
-            logger.add_scalar("train/loss", loss, it)
-            # print(f"[{it}] {loss:.4f}")
+        try:
+            for batch in train_loader:
+                it += 1
+                loss = trainer.train_step(batch)
+                if loss > 0:
+                    logger.add_scalar("train/loss", loss, it)
+                    losses.append(loss)
 
-            # Print output
-            if print_every > 0 and (it % print_every) == 0:
-                val_loss = trainer.train_step(next(iter(val_loader)), val=True)
-                t = datetime.datetime.now()
-                since = time.strftime("%H:%M:%S", time.gmtime((t - t0).total_seconds()))
-                print(
-                    f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}, val loss={val_loss:.3f}, time: {since}"
-                )
+                # Print output
+                if print_every > 0 and (it % print_every) == 0:
+                    val_loss = trainer.train_step(next(iter(val_loader)), val=True)
+                    t = datetime.datetime.now()
+                    since = time.strftime(
+                        "%H:%M:%S", time.gmtime((t - t0).total_seconds())
+                    )
+                    loss = sum(losses) / len(losses)
+                    losses = []
+                    print(
+                        f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}, "
+                        f"val loss={val_loss:.3f}, time: {since}"
+                    )
 
-            # TODO put back in
-            # Visualize output
-            # if visualize_every > 0 and (it % visualize_every) == 0:
-            #     print("Visualizing")
-            #     for data_vis in data_vis_list:
-            #         if cfg["generation"]["sliding_window"]:
-            #             out = generator.generate_mesh_sliding(data_vis["data"])
-            #         else:
-            #             out = generator.generate_mesh(data_vis["data"])
-            #         # Get statistics
-            #         try:
-            #             mesh, stats_dict = out
-            #         except TypeError:
-            #             mesh, stats_dict = out, {}
+                # Visualize output
+                if visualize_every > 0 and (it % visualize_every) == 0:
+                    print("Visualizing")
+                    for data_vis in data_vis_list:
+                        if cfg["generation"]["sliding_window"]:
+                            out = generator.generate_mesh_sliding(data_vis["data"])
+                        else:
+                            out = generator.generate_mesh(data_vis["data"])
+                        # Get statistics
+                        try:
+                            mesh, stats_dict = out
+                        except TypeError:
+                            mesh, stats_dict = out, {}
 
-            #         mesh.export(
-            #             os.path.join(
-            #                 out_dir,
-            #                 "vis",
-            #                 "{}_{}_{}.off".format(it, data_vis["category"], data_vis["it"]),
-            #             )
-            #         )
+                        mesh.export(
+                            os.path.join(
+                                out_dir,
+                                "vis",
+                                "{}_{}_{}.off".format(
+                                    it, data_vis["category"], data_vis["it"]
+                                ),
+                            )
+                        )
 
-            # # Save checkpoint
-            # if checkpoint_every > 0 and (it % checkpoint_every) == 0:
-            #     print("Saving checkpoint")
-            #     checkpoint_io.save(
-            #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
-            #     )
+                # # Save checkpoint
+                # if checkpoint_every > 0 and (it % checkpoint_every) == 0:
+                #     print("Saving checkpoint")
+                #     checkpoint_io.save(
+                #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
+                #     )
 
-            # # Backup if necessary
-            # if backup_every > 0 and (it % backup_every) == 0:
-            #     print("Backup checkpoint")
-            #     checkpoint_io.save(
-            #         "model_%d.pt" % it,
-            #         epoch_it=epoch_it,
-            #         it=it,
-            #         loss_val_best=metric_val_best,
-            #     )
-            # # Run validation
-            # if validate_every > 0 and (it % validate_every) == 0:
-            #     eval_dict = trainer.evaluate(val_loader)
-            #     metric_val = eval_dict[model_selection_metric]
-            #     print(f"Validation metric ({model_selection_metric}): {metric_val}")
+                # # Backup if necessary
+                # if backup_every > 0 and (it % backup_every) == 0:
+                #     print("Backup checkpoint")
+                #     checkpoint_io.save(
+                #         "model_%d.pt" % it,
+                #         epoch_it=epoch_it,
+                #         it=it,
+                #         loss_val_best=metric_val_best,
+                #     )
+                # # Run validation
+                # if validate_every > 0 and (it % validate_every) == 0:
+                #     eval_dict = trainer.evaluate(val_loader)
+                #     metric_val = eval_dict[model_selection_metric]
+                #     print(f"Validation metric ({model_selection_metric}): {metric_val}")
 
-            #     for k, v in eval_dict.items():
-            #         logger.add_scalar("val/%s" % k, v, it)
+                #     for k, v in eval_dict.items():
+                #         logger.add_scalar("val/%s" % k, v, it)
 
-            #     if model_selection_sign * (metric_val - metric_val_best) > 0:
-            #         metric_val_best = metric_val
-            #         print("New best model (loss {metric_val_best})")
-            #         checkpoint_io.save(
-            #             "model_best.pt",
-            #             epoch_it=epoch_it,
-            #             it=it,
-            #             loss_val_best=metric_val_best,
-            #         )
+                #     if model_selection_sign * (metric_val - metric_val_best) > 0:
+                #         metric_val_best = metric_val
+                #         print("New best model (loss {metric_val_best})")
+                #         checkpoint_io.save(
+                #             "model_best.pt",
+                #             epoch_it=epoch_it,
+                #             it=it,
+                #             loss_val_best=metric_val_best,
+                #         )
 
-            # # Exit if necessary
-            # if exit_after > 0 and (datetime.datetime.now() - t0) >= exit_after:
-            #     print("Time limit reached. Exiting.")
-            #     checkpoint_io.save(
-            #         "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
-            #     )
-            #     exit(3)
+                # Exit if necessary
+                if exit_after > 0 and (datetime.datetime.now() - t0) >= exit_after:
+                    print("Time limit reached. Exiting.")
+                    checkpoint_io.save(
+                        "model.pt",
+                        epoch_it=epoch_it,
+                        it=it,
+                        loss_val_best=metric_val_best,
+                    )
+                    exit(3)
+        except Exception as e:
+            print(e)
+            pass

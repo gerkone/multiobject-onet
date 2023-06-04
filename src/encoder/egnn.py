@@ -1,5 +1,6 @@
 """Adapted from https://github.com/vgsatorras/egnn"""
 
+from typing import Optional
 import torch
 from torch import nn
 from torch_cluster import knn_graph
@@ -130,11 +131,11 @@ class E_GCL(nn.Module):
 class EGNN(nn.Module):
     def __init__(
         self,
-        c_dim=128,
-        vector_c_dim=16,
+        c_dim=32,
         hidden_size=64,
-        device="cpu",
+        device="cuda",
         act_fn=nn.SiLU(),
+        task="node",
         n_layers=3,
         n_neighbors=5,
         residual=True,
@@ -145,8 +146,7 @@ class EGNN(nn.Module):
     ):
         """
         Args:
-            scalar_c_dim (int): Number of features for 'h' at the output
-            vector_c_dim (int): Number of features for 'x' at the output
+            c_dim (int): Number of features for 'h' at the output
             hidden_size (int): Number of hidden features
             device (str): Device (e.g. 'cpu', 'cuda:0',...)
             act_fn (str): Non-linearity
@@ -164,19 +164,14 @@ class EGNN(nn.Module):
         self.n_layers = n_layers
         self.n_neighbors = n_neighbors
         self.eps = eps
+        self.task = task
 
         self.scalar_embedding_in = nn.Linear(2, self.hidden_size)
 
         self.c_dim = c_dim
-        self.vector_c_dim = vector_c_dim
 
         # readout
         self.scalar_readout = nn.Linear(self.hidden_size, c_dim)
-        self.readout_mix_net = nn.Sequential(
-            nn.Linear(self.hidden_size + 1, self.hidden_size),
-            act_fn,
-            nn.Linear(self.hidden_size, c_dim + vector_c_dim),
-        )
 
         for i in range(0, n_layers):
             self.add_module(
@@ -195,70 +190,87 @@ class EGNN(nn.Module):
             )
         self.to(self.device)
 
-    def forward(self, pc: torch.Tensor, node_tag: torch.Tensor):
+    def forward(
+        self,
+        pc: torch.Tensor,
+        node_tag: torch.Tensor,
+        additional_scalars: Optional[torch.Tensor] = None,
+    ):
         """Encoder forward pass
 
         Args:
-            inputs (torch.Tensor): point cloud (bs, n_nodes, 3)
+            pc (torch.Tensor): point cloud (bs, n_nodes, 3)
             node_tag (torch.Tensor): node-wise instance tag (bs, n_nodes)
 
         Returns:
             Tuple with the scalar and the vector codes per object
         """
-        bs = pc.shape[0]
+        bs, n_nodes, _ = pc.shape
+        n_obj = node_tag[0].max().item() + 1
         pc = pc.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
         node_tag = node_tag.view(-1)  # (bs * n_nodes,)
         # feature transform
-        h, x, edges, edge_attr = self._transform(pc, node_tag)
+        h, x, edges, edge_attr, barycenters = self._transform(
+            pc, node_tag, bs, n_obj, additional_scalars=additional_scalars
+        )
         # embedding
         h = self.scalar_embedding_in(h)  # (n_nodes, hidden_size)
         # message passing
         for i in range(0, self.n_layers):
             h, x, _ = self._modules[f"gcl_{i}"](h, edges, x, edge_attr=edge_attr)
 
-        s_codes, v_codes = self._readout(h, x, node_tag, bs)
+        if self.task == "graph":
+            s_codes, v_codes = self._readout(h, x, node_tag, bs, barycenters)
+        elif self.task == "node":
+            s_codes = self.scalar_readout(h).view(bs, n_nodes, self.c_dim)
+            v_codes = x.view(bs, n_nodes, 3)
+
         return s_codes, v_codes
 
-    def _transform(self, pc, node_tag):
+    def _transform(self, pc, node_tag, bs, n_obj, additional_scalars=None):
+        # barycenters
+        barycenters = torch.stack(
+            [pc[node_tag == i].mean(dim=0) for i in node_tag.unique()], dim=0
+        ).reshape(bs * n_obj, 3)
         # edge indices (knn)
         # batch index per node (avoid knn across graphs)
-        edges = knn_graph(pc, self.n_neighbors, node_tag)
+        if self.n_neighbors != -1:
+            edges = knn_graph(pc, self.n_neighbors, node_tag)
+        else:
+            # fully connected
+            edges = torch.combinations(torch.arange(pc.shape[0]), r=2).transpose(0, 1)
+        edges = edges.to(self.device)
         snd, rcv = edges
         displ = pc[snd] - pc[rcv]
         distance = torch.norm(displ, dim=-1, keepdim=True)
         directon = displ / (distance + self.eps)
         # vector node features coordinates
-        loc = torch.norm(pc, dim=-1, keepdim=True)
-        x = pc / (loc + self.eps)
+        # subtract barycenter to the respective object points
+        x = pc - barycenters[node_tag]
         # scalar node features (location and density)
+        loc = torch.norm(pc, dim=-1, keepdim=True)
         density = scatter(distance, snd, node_tag.shape[0], reduce="mean")[:, None]
         h = torch.cat([loc, density], axis=-1)
+        if additional_scalars:
+            h = torch.cat([h, additional_scalars], axis=-1)
         # scalar edge features (distance and angle)
         dist = torch.norm(displ, dim=-1, keepdim=True)
         a = torch.sum(directon[edges[0]] * directon[edges[1]], dim=-1, keepdim=True)
         angles = torch.acos(torch.clamp(a, -1 + self.eps, 1 - self.eps))
         edge_attr = torch.cat([dist, angles], axis=-1)
-        return h, x, edges, edge_attr
+        return h, x, edges, edge_attr, barycenters
 
-    def _readout(self, h, x, node_tag, batch_size):
+    def _readout(self, h, x, node_tag, bs, barycenters):
         # graph pooling
         n_segments = torch.unique(node_tag).shape[0]
-        n_obj = n_segments // batch_size
+        n_obj = n_segments // bs
         node_tag = node_tag.long()
         s_codes = scatter(h, node_tag, n_segments, "amax")  # (bs * n_obj, hidden_size)
         v_codes = scatter(x, node_tag, n_segments, "mean")  # (bs * n_obj, 3)
 
-        mix = self.readout_mix_net(
-            torch.cat([s_codes, torch.norm(v_codes, dim=-1, keepdim=True)], dim=-1)
-        )  # (bs * n_obj, c_dim + vector_c_dim)
-        scalar_mix, vector_mix = torch.split(
-            mix, [self.c_dim, self.vector_c_dim], dim=-1
-        )
-        s_codes = self.scalar_readout(s_codes) * scalar_mix
-        # vector readout
-        v_codes = v_codes[:, None] * vector_mix[..., None]
-
-        s_codes = s_codes.view(batch_size, n_obj, self.c_dim)
-        v_codes = v_codes.view(batch_size, n_obj, self.vector_c_dim, 3)
+        s_codes = self.scalar_readout(s_codes)
+        s_codes = s_codes.view(bs, n_obj, self.c_dim)
+        # add barycenters
+        v_codes = v_codes.view(bs, n_obj, 3) + barycenters.view(bs, n_obj, 3)
 
         return s_codes, v_codes

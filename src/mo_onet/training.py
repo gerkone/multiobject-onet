@@ -51,28 +51,40 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
-        # ensure same number of objects per batch
-        n_obj = [d.max() for d in data["object_tag"]]
-        assert all(n_obj[0] == n for n in n_obj), "Different n_obj per batch."
+        try:
+            bs = data["points"].shape[0]
+            same_n_obj = all(
+                data["inputs.node_tags"][i].unique().shape[0]
+                == data["inputs.node_tags"][0].unique().shape[0]
+                for i in range(bs)
+            )
 
-        # vmap over batch size
-        n_obj = n_obj[0] + 1
+            # filter elements with different number of objects
+            mask = [
+                data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)
+            ]
+            # print("mask\n", mask)
+            if not any(mask):
+                return 0.0
+            batch = {k: v[mask] for k, v in data.items()}
+            loss = self.compute_loss(batch)
 
-        # TODO (GAL) vmap is very slow right now. Try to go back to batching
-        # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
-        #     data, n_obj
-        # ).mean()
+            # TODO (GAL) vmap is very slow right now. Try to go back to batching
+            # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
+            #     data, n_obj
+            # ).mean()
 
-        loss = self.compute_loss(data, n_obj)
+            if loss < 0.005:
+                pass
 
-        if loss < 0.005:
-            pass
-            
-        if not val:
-            loss.backward()
-            self.optimizer.step()
+            if not val:
+                loss.backward()
+                self.optimizer.step()
 
-        return loss.item()
+            return loss.item()
+        except Exception as e:
+            print(e)
+            return 0.0
 
     def eval_step(self, data):
         """Performs an evaluation step.
@@ -142,7 +154,7 @@ class Trainer(BaseTrainer):
 
         return eval_dict
 
-    def compute_loss(self, data, n_obj):
+    def compute_loss(self, data):
         """Computes the loss.
 
         Args:
@@ -151,8 +163,10 @@ class Trainer(BaseTrainer):
         device = self.device
         p = data.get("points").to(device)
         target_occ = data.get("points.occ").to(device)  # (bs, n_points,)
+        node_occs = data.get("inputs.node_occs").to(device)  # (bs, n_obj, n_points)
+
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
-        seg_target = data.get("object_tag").to(device)
+        node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
 
         if "pointcloud_crop" in data.keys():
             # add pre-computed index
@@ -166,17 +180,35 @@ class Trainer(BaseTrainer):
         # segment and split objects
         # TODO real instance segmentation
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
-        node_tag = seg_target
 
         # encoder
-        codes = self.model.encode_multi_object(inputs, node_tag)
-
-        pred_occ = self.model.decode_multi_object(p, codes)  # (bs, total_n_points,)
-
-        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, target_occ, reduction="mean"
+        codes, obj_batch = self.model.encode_multi_object(
+            inputs, torch.zeros_like(node_tag)
         )
 
-        total_loss = scene_reconstruction_loss
+        pred_occ = self.model.decode_multi_object(
+            p, codes, node_tag=obj_batch
+        )  # (bs, n_obj, total_n_points)
+
+        ones_ratio = target_occ.sum() / target_occ.numel()
+        weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-3)
+
+        # object_reconstruction_loss = (
+        #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False)
+        #     # average over points
+        #     .mean(-1)
+        #     # sum over objects
+        #     .sum(-1)
+        # )
+
+        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
+            pred_occ, target_occ, weight=weight
+        )
+
+        # scene_reconstruction_loss = F.binary_cross_entropy(
+        #     F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
+        # )
+        # average over batch
+        total_loss = scene_reconstruction_loss  # + object_reconstruction_loss.mean(0)
 
         return total_loss

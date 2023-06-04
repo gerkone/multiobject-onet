@@ -9,6 +9,13 @@ from sklearn.cluster import KMeans
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
+from src.utils.segment import (
+    get_bboxes,
+    segment_objects,
+    separate_occ,
+    separate_occ_sm,
+    segment_objects_sm,
+)
 
 
 class IndexField(Field):
@@ -81,6 +88,8 @@ class PatchPointsField(Field):
             occupancies = np.unpackbits(occupancies)[: points.shape[0]]
         occupancies = occupancies.astype(np.float32)
 
+        semantics = points_dict["semantics"]
+
         # acquire the crop
         ind_list = []
         for i in range(3):
@@ -89,10 +98,7 @@ class PatchPointsField(Field):
                 & (points[:, i] <= vol["query_vol"][1][i])
             )
         ind = ind_list[0] & ind_list[1] & ind_list[2]
-        data = {
-            None: points[ind],
-            "occ": occupancies[ind],
-        }
+        data = {None: points[ind], "occ": occupancies[ind], "semantics": semantics[ind]}
 
         if self.transform is not None:
             data = self.transform(data)
@@ -154,52 +160,29 @@ class PointsField(Field):
             occupancies = np.unpackbits(occupancies)[: points.shape[0]]
         occupancies = occupancies.astype(np.float32)
 
-        data = {
-            None: points,
-            "occ": occupancies,
-        }
+        semantics = points_dict["semantics"]
+
+        # # zoom in on the points around the true occupancies
+        # xyz_min = np.min(points[occupancies == 1], axis=0) * 0.95
+        # xyz_max = np.max(points[occupancies == 1], axis=0) * 1.05
+        # ind = (
+        #     (points[:, 0] >= xyz_min[0])
+        #     & (points[:, 0] <= xyz_max[0])
+        #     & (points[:, 1] >= xyz_min[1])
+        #     & (points[:, 1] <= xyz_max[1])
+        #     & (points[:, 2] >= xyz_min[2])
+        #     & (points[:, 2] <= xyz_max[2])
+        # )
+        # points = points[ind]
+        # occupancies = occupancies[ind]
+        # semantics = semantics[ind]
+
+        data = {None: points, "occ": occupancies, "semantics": semantics}
 
         if self.transform is not None:
             data = self.transform(data)
 
         return data
-
-
-class ObjectTagField(Field):
-    """Segmentation object tag field."""
-
-    def __init__(self, point_field, file_name):
-        self.point_field = point_field
-        self.file_name = file_name
-
-    def load(self, model_path, idx, category):
-        """Loads the data point.
-
-        Args:
-            model_path (str): path to model
-            idx (int): ID of data point
-            category (int): index of category
-        """
-        file_path = os.path.join(model_path, f"{self.file_name}.npz")
-
-        item_dict = np.load(file_path)
-        obj_ids = item_dict["objects"]
-
-        # TODO (NINA) do real segmentation here
-
-        # kmeans over objects
-        # TODO avoid reloading
-        points = self.point_field.load(model_path, idx, category)[None]
-
-        import torch
-
-        return torch.zeros(points.shape[0], dtype=torch.long)
-
-        # return (
-        #     KMeans(n_clusters=len(obj_ids), n_init="auto")
-        #     .fit_predict(points)
-        #     .astype(np.int64)
-        # )
 
 
 class VoxelsField(Field):
@@ -335,17 +318,26 @@ class PointCloudField(Field):
     randomly sampled on the mesh.
 
     Args:
-        file_name (str): file name
+        point_file_name (str): file name
         transform (list): list of transformations applied to data points
         multi_files (callable): number of files
     """
 
-    def __init__(self, file_name, transform=None, multi_files=None):
-        self.file_name = file_name
+    def __init__(
+        self,
+        point_file_name,
+        item_file_name,
+        transform=None,
+        multi_files=None,
+        multi_object=None,
+    ):
+        self.point_file_name = point_file_name
+        self.item_file_name = item_file_name
         self.transform = transform
         self.multi_files = multi_files
+        self.multi_object = multi_object
 
-    def load(self, model_path, idx, category):
+    def load(self, model_path, idx, category, points_iou=None):
         """Loads the data point.
 
         Args:
@@ -354,11 +346,13 @@ class PointCloudField(Field):
             category (int): index of category
         """
         if self.multi_files is None:
-            file_path = os.path.join(model_path, self.file_name)
+            file_path = os.path.join(model_path, self.point_file_name)
         else:
             num = np.random.randint(self.multi_files)
             file_path = os.path.join(
-                model_path, self.file_name, "%s_%02d.npz" % (self.file_name, num)
+                model_path,
+                self.point_file_name,
+                "%s_%02d.npz" % (self.point_file_name, num),
             )
 
         pointcloud_dict = np.load(file_path)
@@ -371,6 +365,25 @@ class PointCloudField(Field):
             "normals": normals,
         }
 
+        if self.multi_object:
+            semantics = pointcloud_dict["semantics"].astype(np.int64)
+            data["semantics"] = semantics.copy().astype(np.int32)
+
+            item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
+            item_dict = np.load(item_file_path, allow_pickle=True)
+
+            bboxes = get_bboxes(item_dict["bboxes"], item_dict["xz_groundplane_range"])
+            # segmented, bboxes3d = segment_objects(semantics)
+            segmented = segment_objects_sm(semantics)
+            data["node_tags"] = segmented.astype(np.int32)  # semantically separated
+
+            points_iou_pc = points_iou[None]
+            points_iou_occ = points_iou["occ"]
+            points_iou_sem = points_iou["semantics"]
+            # segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
+            segmented_occ, sem = separate_occ_sm(points_iou_sem)
+            data["node_occs"] = segmented_occ  # N, occ_points
+
         if self.transform is not None:
             data = self.transform(data)
 
@@ -382,7 +395,7 @@ class PointCloudField(Field):
         Args:
             files: files
         """
-        complete = self.file_name in files
+        complete = self.point_file_name in files
         return complete
 
 

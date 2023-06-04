@@ -9,6 +9,7 @@ from torch import autograd
 from tqdm import trange
 
 from src.common import add_key, coord2index, make_3d_grid, normalize_coord
+
 from src.utils.libmise import MISE
 from src.utils.libsimplify import simplify_mesh
 
@@ -16,13 +17,12 @@ counter = 0
 
 
 class MultiObjectGenerator3D(object):
-    """Generator class for the multi-object case.
+    """Generator class for Occupancy Networks.
 
     It provides functions to generate the final mesh as well refining options.
 
     Args:
         model (nn.Module): trained Occupancy Network model
-        scene_builder (nn.Module): scene builder
         points_batch_size (int): batch size for points evaluation
         threshold (float): threshold value
         refinement_step (int): number of refinement steps
@@ -41,7 +41,6 @@ class MultiObjectGenerator3D(object):
     def __init__(
         self,
         model,
-        scene_builder,
         points_batch_size=100000,
         threshold=0.5,
         refinement_step=0,
@@ -68,7 +67,6 @@ class MultiObjectGenerator3D(object):
         self.padding = padding
         self.sample = sample
         self.simplify_nfaces = simplify_nfaces
-        self.scene_builder = scene_builder
 
         # for pointcloud_crop
         self.vol_bound = vol_bound
@@ -87,6 +85,9 @@ class MultiObjectGenerator3D(object):
         stats_dict = {}
 
         inputs = data.get("inputs", torch.empty(1, 0)).to(device)
+        # TODO get from segmentation
+        node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
+
         kwargs = {}
 
         t0 = time.time()
@@ -94,41 +95,29 @@ class MultiObjectGenerator3D(object):
         # obtain features for all crops
         if self.vol_bound is not None:
             self.get_crop_bound(inputs)
-            code = self.encode_crop(inputs, device)
+            c = self.encode_crop(inputs, device)
         else:  # input the entire volume
             inputs = add_key(
                 inputs, data.get("inputs.ind"), "points", "index", device=device
             )
             t0 = time.time()
             with torch.no_grad():
-                codes = self.model.encode_and_segment(inputs)
+                c, obj_tag = self.model.encode_multi_object(inputs, node_tag)
+
         stats_dict["time (encode inputs)"] = time.time() - t0
-
-        # generate list of meshes
-        meshes = self.generate_from_latent(codes, stats_dict=stats_dict, **kwargs)
-
-        # scene building. from local to global
-        scene = self.scene_builder(meshes)
+        mesh = self.generate_from_latent(c, stats_dict=stats_dict, node_tag=obj_tag)
 
         if return_stats:
-            return scene, stats_dict
+            return mesh, stats_dict
         else:
-            return scene
+            return mesh
 
-    def generate_mesh_sliding(self, data, return_stats=True):
-        raise NotImplementedError
-
-    def generate_from_latent(self, codes=None, stats_dict={}, **kwargs):
-        """Generates full scene mesches from list of latent codes."""
-        return [
-            self._generate_sigle_from_latent(c, stats_dict, **kwargs) for c in codes
-        ]
-
-    def _generate_sigle_from_latent(self, c=None, stats_dict={}, **kwargs):
-        """Generates one mesh from latent. Works for shapes normalized to a unit cube.
+    def generate_from_latent(self, c=None, stats_dict={}, **kwargs):
+        """Generates mesh from latent.
+            Works for shapes normalized to a unit cube
 
         Args:
-            c (tensor): latent conditioned c for a single object
+            c (tensor): latent conditioned code c
             stats_dict (dict): stats dictionary
         """
         threshold = np.log(self.threshold) - np.log(1.0 - self.threshold)
@@ -140,10 +129,9 @@ class MultiObjectGenerator3D(object):
         # Shortcut
         if self.upsampling_steps == 0:
             nx = self.resolution0
-            # grid points in normalized coordinates
             pointsf = box_size * make_3d_grid((-0.5,) * 3, (0.5,) * 3, (nx,) * 3)
 
-            values = self._eval_points_single_shape(pointsf, c, **kwargs).cpu().numpy()
+            values = self.eval_points(pointsf, c, **kwargs).cpu().numpy()
             value_grid = values.reshape(nx, nx, nx)
         else:
             mesh_extractor = MISE(self.resolution0, self.upsampling_steps, threshold)
@@ -156,9 +144,7 @@ class MultiObjectGenerator3D(object):
                 pointsf = box_size * (pointsf - 0.5)
                 pointsf = torch.FloatTensor(pointsf).to(self.device)
                 # Evaluate model and update
-                values = (
-                    self._eval_points_single_shape(pointsf, c, **kwargs).cpu().numpy()
-                )
+                values = self.eval_points(pointsf, c, **kwargs).cpu().numpy()
                 values = values.astype(np.float64)
                 mesh_extractor.update(points, values)
                 points = mesh_extractor.query()
@@ -170,6 +156,108 @@ class MultiObjectGenerator3D(object):
 
         mesh = self.extract_mesh(value_grid, c, stats_dict=stats_dict)
         return mesh
+
+    def generate_mesh_sliding(self, data, return_stats=True):
+        """Generates the output mesh in sliding-window manner.
+            Adapt for real-world scale.
+
+        Args:
+            data (tensor): data tensor
+            return_stats (bool): whether stats should be returned
+        """
+        self.model.eval()
+        device = self.device
+        stats_dict = {}
+
+        threshold = np.log(self.threshold) - np.log(1.0 - self.threshold)
+
+        inputs = data.get("inputs", torch.empty(1, 0)).to(device)
+        kwargs = {}
+
+        # acquire the boundary for every crops
+        self.get_crop_bound(inputs)
+
+        nx = self.resolution0
+        n_crop = self.vol_bound["n_crop"]
+        n_crop_axis = self.vol_bound["axis_n_crop"]
+
+        # occupancy in each direction
+        r = nx * 2**self.upsampling_steps
+        occ_values = np.array([]).reshape(r, r, 0)
+        occ_values_y = np.array([]).reshape(r, 0, r * n_crop_axis[2])
+        occ_values_x = np.array([]).reshape(0, r * n_crop_axis[1], r * n_crop_axis[2])
+        for i in trange(n_crop):
+            # encode the current crop
+            vol_bound = {}
+            vol_bound["query_vol"] = self.vol_bound["query_vol"][i]
+            vol_bound["input_vol"] = self.vol_bound["input_vol"][i]
+            c = self.encode_crop(inputs, device, vol_bound=vol_bound)
+
+            bb_min = self.vol_bound["query_vol"][i][0]
+            bb_max = bb_min + self.vol_bound["query_crop_size"]
+
+            if self.upsampling_steps == 0:
+                t = (bb_max - bb_min) / nx  # inteval
+                pp = (
+                    np.mgrid[
+                        bb_min[0] : bb_max[0] : t[0],
+                        bb_min[1] : bb_max[1] : t[1],
+                        bb_min[2] : bb_max[2] : t[2],
+                    ]
+                    .reshape(3, -1)
+                    .T
+                )
+                pp = torch.from_numpy(pp).to(device)
+                values = (
+                    self.eval_points(pp, c, vol_bound=vol_bound, **kwargs)
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+                values = values.reshape(nx, nx, nx)
+            else:
+                mesh_extractor = MISE(
+                    self.resolution0, self.upsampling_steps, threshold
+                )
+                points = mesh_extractor.query()
+                while points.shape[0] != 0:
+                    pp = points / mesh_extractor.resolution
+                    pp = pp * (bb_max - bb_min) + bb_min
+                    pp = torch.from_numpy(pp).to(self.device)
+
+                    values = (
+                        self.eval_points(pp, c, vol_bound=vol_bound, **kwargs)
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+                    values = values.astype(np.float64)
+                    mesh_extractor.update(points, values)
+                    points = mesh_extractor.query()
+
+                values = mesh_extractor.to_dense()
+                # MISE consider one more voxel around boundary, remove
+                values = values[:-1, :-1, :-1]
+
+            # concatenate occ_value along every axis
+            # along z axis
+            occ_values = np.concatenate((occ_values, values), axis=2)
+            # along y axis
+            if (i + 1) % n_crop_axis[2] == 0:
+                occ_values_y = np.concatenate((occ_values_y, occ_values), axis=1)
+                occ_values = np.array([]).reshape(r, r, 0)
+            # along x axis
+            if (i + 1) % (n_crop_axis[2] * n_crop_axis[1]) == 0:
+                occ_values_x = np.concatenate((occ_values_x, occ_values_y), axis=0)
+                occ_values_y = np.array([]).reshape(r, 0, r * n_crop_axis[2])
+
+        value_grid = occ_values_x
+        mesh = self.extract_mesh(value_grid, c, stats_dict=stats_dict)
+
+        if return_stats:
+            return mesh, stats_dict
+        else:
+            return mesh
 
     def get_crop_bound(self, inputs):
         """Divide a scene into crops, get boundary for each crop
@@ -211,7 +299,8 @@ class MultiObjectGenerator3D(object):
             device (device): pytorch device
             vol_bound (dict): volume boundary
         """
-        if vol_bound is None:
+        raise NotImplementedError
+        if vol_bound == None:
             vol_bound = self.vol_bound
 
         index = {}
@@ -254,11 +343,11 @@ class MultiObjectGenerator3D(object):
             )
 
         with torch.no_grad():
-            codes = self.model.encode_and_segment(input_cur)
-        return codes
+            c = self.model.encode_multi_object(input_cur)
+        return c
 
-    def _predict_crop_occ_single_shape(self, pi, c, vol_bound=None, **kwargs):
-        """Predict occupancy values for a crop of a single object.
+    def predict_crop_occ(self, pi, c, vol_bound=None, **kwargs):
+        """Predict occupancy values for a crop
 
         Args:
             pi (dict): query points
@@ -283,24 +372,24 @@ class MultiObjectGenerator3D(object):
 
         # predict occupancy of the current crop
         with torch.no_grad():
-            occ_cur = self.model.decode_single(pi_in, c, **kwargs).logits
+            occ_cur = self.model.decode(pi_in, c, **kwargs).logits
         occ_hat = occ_cur.squeeze(0)
 
         return occ_hat
 
-    def _eval_points_single_shape(self, p, c=None, vol_bound=None, **kwargs):
-        """Evaluates the single shape occupancy values for the points.
+    def eval_points(self, p, c=None, vol_bound=None, **kwargs):
+        """Evaluates the occupancy values for the points.
 
         Args:
             p (tensor): points
-            codes (tensor): encoded feature volumes
+            c (tensor): encoded feature volumes
         """
         p_split = torch.split(p, self.points_batch_size)
         occ_hats = []
         for pi in p_split:
             if self.input_type == "pointcloud_crop":
                 if self.vol_bound is not None:  # sliding-window manner
-                    occ_hat = self._predict_crop_occ_single_shape(
+                    occ_hat = self.predict_crop_occ(
                         pi, c, vol_bound=vol_bound, **kwargs
                     )
                     occ_hats.append(occ_hat)
@@ -317,14 +406,14 @@ class MultiObjectGenerator3D(object):
                         )
                     pi_in["p_n"] = p_n
                     with torch.no_grad():
-                        occ_hat = self.model.decode_single_object(
+                        occ_hat = self.model.decode_multi_object(
                             pi_in, c, **kwargs
                         ).logits
                     occ_hats.append(occ_hat.squeeze(0).detach().cpu())
             else:
                 pi = pi.unsqueeze(0).to(self.device)
                 with torch.no_grad():
-                    occ_hat = self.model.decode_single_object(pi, c, **kwargs).logits
+                    occ_hat = self.model.decode_multi_object(pi, c, **kwargs).logits
                 occ_hats.append(occ_hat.squeeze(0).detach().cpu())
 
         occ_hat = torch.cat(occ_hats, dim=0)
@@ -348,7 +437,7 @@ class MultiObjectGenerator3D(object):
         vertices, triangles = marching_cubes(occ_hat_padded, threshold)
         stats_dict["time (marching cubes)"] = time.time() - t0
         # Strange behaviour in libmcubes: vertices are shifted by 0.5
-        # TODO investigate
+        # TODO investigate if its still the case
         # vertices -= 0.5
         # # Undo padding
         vertices -= 1
@@ -400,7 +489,7 @@ class MultiObjectGenerator3D(object):
 
         return mesh
 
-    def _estimate_normals_SINGLE_SHAPE(self, vertices, c=None):
+    def estimate_normals(self, vertices, c=None):
         """Estimates the normals by computing the gradient of the objective.
 
         Args:
@@ -416,7 +505,7 @@ class MultiObjectGenerator3D(object):
         for vi in vertices_split:
             vi = vi.unsqueeze(0).to(device)
             vi.requires_grad_()
-            occ_hat = self.model.decode_single_object(vi, c).logits
+            occ_hat = self.model.decode_multi_object(vi, c).logits
             out = occ_hat.sum()
             out.backward()
             ni = -vi.grad
@@ -433,9 +522,9 @@ class MultiObjectGenerator3D(object):
         Args:
             mesh (trimesh object): predicted mesh
             occ_hat (tensor): predicted occupancy grid
-            c (tensor): latent conditioned code
+            c (tensor): latent conditioned code c
         """
-        # TODO
+
         self.model.eval()
 
         # Some shorthands
@@ -454,7 +543,7 @@ class MultiObjectGenerator3D(object):
         # Start optimization
         optimizer = optim.RMSprop([v], lr=1e-4)
 
-        for _ in trange(self.refinement_step):
+        for it_r in trange(self.refinement_step):
             optimizer.zero_grad()
 
             # Loss
@@ -468,7 +557,7 @@ class MultiObjectGenerator3D(object):
             face_normal = torch.cross(face_v1, face_v2)
             face_normal = face_normal / (face_normal.norm(dim=1, keepdim=True) + 1e-10)
             face_value = torch.sigmoid(
-                self.model.decode_single_object(face_point.unsqueeze(0), c).logits
+                self.model.decode_multi_object(face_point.unsqueeze(0), c).logits
             )
             normal_target = -autograd.grad(
                 [face_value.sum()], [face_point], create_graph=True

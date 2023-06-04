@@ -1,17 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_cluster import knn
 
-from src.layers import CBatchNorm1d, CResnetBlockConv1d
+from src.layers import CBatchNorm1d, CResnetBlockConv1d, ResnetBlockFC
 
 
 class E3Decoder(nn.Module):
-    """Equivariant Decoder network. UNSTABLE."""
+    """Equivariant Decoder network."""
 
     def __init__(
         self,
-        c_dim=128,
-        vector_c_dim=16,
+        c_dim=32,
         n_blocks=2,
         hidden_size=64,
     ):
@@ -26,10 +26,9 @@ class E3Decoder(nn.Module):
         super().__init__()
 
         self.c_dim = c_dim
-        self.vector_c_dim = vector_c_dim
 
         self.scalar_mix_in = nn.Linear(c_dim, c_dim)
-        self.point_emb = nn.Linear(vector_c_dim + 1 + 1, hidden_size)
+        self.point_emb = nn.Linear(1 + 1 + 1, hidden_size)
 
         self.n_blocks = n_blocks
 
@@ -40,17 +39,17 @@ class E3Decoder(nn.Module):
 
     def forward(self, p, code, **kwargs):
         bs, n_sample_points, _ = p.shape
-
         scalar_c, vector_c = code
-
         bs, n_obj, _ = scalar_c.shape
-        scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
-        vector_c = vector_c.view(bs * n_obj, self.vector_c_dim, 3).contiguous()
 
-        p2 = torch.sum(p * p, dim=2, keepdim=True)  # (bs * o_obj, n_sample, 1)
-        x_code = torch.einsum(
-            "omd,ond->omn", p, vector_c
-        )  # (bs * o_obj, n_sample, vector_c_dim)
+        p2 = torch.sum(p * p, dim=2, keepdim=True).repeat(
+            n_obj, 1, 1
+        )  # (bs * o_obj, n_sample, 1)
+        x_code = torch.einsum("bmd,bod->bom", p, vector_c)  # (bs, o_obj, n_sample)
+        x_code = x_code.reshape(bs * n_obj, n_sample_points, -1).contiguous()
+        scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
+        vector_c = vector_c.view(bs * n_obj, 1, 3).contiguous()
+
         inv_code = torch.sum(
             scalar_c * self.scalar_mix_in(scalar_c), dim=-1, keepdim=True
         )  # (bs * o_obj, 1)
@@ -58,7 +57,7 @@ class E3Decoder(nn.Module):
         inv_code = inv_code[..., None]  # (bs * o_obj, n_sample, 1)
         x = torch.cat(
             [p2, x_code, inv_code], dim=-1
-        )  # (bs * o_obj, n_sample, vec_c_dim + 1 + 1)
+        )  # (bs * o_obj, n_sample, 1 + 1 + 1)
 
         # sample point embedding
         x = self.point_emb(x)
@@ -76,8 +75,8 @@ class E3Decoder(nn.Module):
         return occ
 
 
-class DecoderCBN(nn.Module):
-    """Decoder with conditional batch normalization (CBN) class.
+class CBNDecoder(nn.Module):
+    """Decoder with conditional batch normalization.
 
     Args:
         dim (int): input dimension
@@ -86,7 +85,7 @@ class DecoderCBN(nn.Module):
         leaky (bool): whether to use leaky ReLUs
     """
 
-    def __init__(self, c_dim=128, n_blocks=4, hidden_size=64):
+    def __init__(self, c_dim=32, n_blocks=4, hidden_size=64):
         super().__init__()
 
         self.n_blocks = n_blocks
@@ -123,3 +122,138 @@ class DecoderCBN(nn.Module):
         out = out.view(bs, n_obj, -1)  # (bs, n_obj, n_points)
 
         return out
+
+
+class DGCNNDecoder(nn.Module):
+    """Decoder for PointConv Baseline.
+
+    Args:
+        dim (int): input dimension
+        c_dim (int): dimension of latent conditioned code c
+        hidden_size (int): hidden size of Decoder network
+        leaky (bool): whether to use leaky ReLUs
+        n_blocks (int): number of blocks ResNetBlockFC layers
+        sample_mode (str): sampling mode  for points
+    """
+
+    def __init__(
+        self, dim=3, c_dim=32, hidden_size=256, leaky=False, n_blocks=5, n_neighbors=20
+    ):
+        super().__init__()
+        self.c_dim = c_dim
+        self.n_blocks = n_blocks
+
+        self.k = n_neighbors
+
+        self.fc_c = nn.ModuleList(
+            [nn.Linear(c_dim, hidden_size) for _ in range(n_blocks)]
+        )
+
+        self.fc_p = nn.Linear(dim, hidden_size)
+
+        self.blocks = nn.ModuleList(
+            [ResnetBlockFC(hidden_size) for _ in range(n_blocks)]
+        )
+
+        self.fc_out = nn.Linear(hidden_size, 1)
+
+        if not leaky:
+            self.actvn = F.relu
+        else:
+            self.actvn = lambda x: F.leaky_relu(x, 0.2)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(6 + c_dim, hidden_size, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden_size),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(hidden_size, hidden_size, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden_size),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(hidden_size, c_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(c_dim),
+            nn.LeakyReLU(negative_slope=0.2),
+        )
+
+    def forward(self, p, codes, **kwargs):
+        bs, n_points, _ = p.shape
+
+        node_tag = kwargs.get("node_tag")
+        node_tag = node_tag.flatten()
+
+        n_obj = (node_tag.max() + 1) // bs
+
+        feat, pc = codes
+        pc = pc.permute(0, 2, 1)  # (bs, 3, n_pc)
+        feat = feat.permute(0, 2, 1)  # (bs, c_dim, n_pc)
+
+        # if n_points >= 30000:
+        #     c_list = []
+        #     for p_split in torch.split(p, 10000, dim=1):
+        #         raise NotImplementedError
+        # else:
+        p = p.permute(0, 2, 1)
+        edge, x, _, yfeat, _ = self._graph_feats(p, pc, feat, self.k)
+
+        x = torch.cat([edge, x, yfeat], dim=1)  # (bs, 20 * 2 * 3, n_pc, n_obj)
+        x = self.conv1(x)  # (bs, hidden_size, N, n_obj)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        # neighbor pool
+        c = x.max(dim=-1, keepdim=False)[0]  # (bs, 24, N)
+        c = c.permute(0, 2, 1)
+        p = p.permute(0, 2, 1)
+
+        p = p.float()
+        net = self.fc_p(p)  # (bs, n_points, hidden_size)
+        # object wise points
+        # net = net.unsqueeze(1).repeat(
+        #     1, n_obj, 1, 1
+        # )  # (bs, n_obj, n_points, hidden_size)
+
+        for i in range(self.n_blocks):
+            net = net + self.fc_c[i](c)
+            net = self.blocks[i](net)
+
+        out = self.fc_out(self.actvn(net))
+        out = out.squeeze(-1)
+
+        # point_to_obj = node_tag[idx].view(bs, n_points, self.k)
+
+        return out  # (bs, n_obj, n_points)
+
+    def _graph_feats(self, x, y, yfeat, k=20):
+        """
+        used when target has extra feature dims
+        :param x: (B, 3, N1)
+        :param y: (B, 3, N2)
+        :param yfeat: (B, d, N2)
+        :param k:
+        :return:
+        """
+        bs, _, n_points_x = x.shape
+        n_points_x = x.shape[2]
+        n_points_y = y.shape[2]
+
+        x = x.permute(0, 2, 1).view(bs * n_points_x, -1)
+        y = y.permute(0, 2, 1).view(bs * n_points_y, -1)
+        yfeat = yfeat.permute(0, 2, 1).view(bs * n_points_y, -1)
+
+        batch_x = torch.arange(bs).repeat_interleave(n_points_x).to(x.device)
+        batch_y = torch.arange(bs).repeat_interleave(n_points_y).to(x.device)
+
+        # idx of shape (n_points_x,) with the index of the nearest center
+        src, dst = knn(y, x, k, batch_x=batch_y, batch_y=batch_x)
+
+        y = y[dst, :]
+        yfeat = yfeat[dst, :]
+        edge = y - x[src, :]
+
+        y = y.view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
+        yfeat = yfeat.view(bs, n_points_x, k, -1).permute(0, 3, 1, 2)  # (bs, d, N, k)
+        edge = edge.view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
+        x = x[src, :].view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
+
+        return edge, x, y, yfeat, dst
