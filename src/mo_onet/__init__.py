@@ -1,3 +1,3 @@
-from src.mo_onet import config, generation, models, training
+from src.mo_onet import config, models, training, generation
 
-__all__ = [config, generation, training, models]
+__all__ = [config, training, models, generation]

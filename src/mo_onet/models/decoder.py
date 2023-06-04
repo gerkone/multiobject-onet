@@ -4,8 +4,6 @@ import torch.nn.functional as F
 from torch_cluster import knn
 
 from src.layers import CBatchNorm1d, CResnetBlockConv1d, ResnetBlockFC
-from src.encoder.utils import scatter
-from src.encoder.egnn import E_GCL
 
 
 class E3Decoder(nn.Module):
@@ -47,12 +45,8 @@ class E3Decoder(nn.Module):
         p2 = torch.sum(p * p, dim=2, keepdim=True).repeat(
             n_obj, 1, 1
         )  # (bs * o_obj, n_sample, 1)
-        x_code = torch.einsum(
-            "bmd,bod->bom", p, vector_c
-        )  # (bs, o_obj, n_sample)
-        x_code = x_code.reshape(
-            bs * n_obj, n_sample_points, -1
-        ).contiguous()
+        x_code = torch.einsum("bmd,bod->bom", p, vector_c)  # (bs, o_obj, n_sample)
+        x_code = x_code.reshape(bs * n_obj, n_sample_points, -1).contiguous()
         scalar_c = scalar_c.view(bs * n_obj, self.c_dim).contiguous()
         vector_c = vector_c.view(bs * n_obj, 1, 3).contiguous()
 
@@ -186,51 +180,51 @@ class DGCNNDecoder(nn.Module):
     def forward(self, p, codes, **kwargs):
         bs, n_points, _ = p.shape
 
-        node_tag = kwargs.get("node_tag", None)
+        node_tag = kwargs.get("node_tag")
+        node_tag = node_tag.flatten()
 
         n_obj = (node_tag.max() + 1) // bs
 
         feat, pc = codes
         pc = pc.permute(0, 2, 1)  # (bs, 3, n_pc)
-        feat = feat.squeeze().permute(0, 2, 1)  # (bs, c_dim, n_pc)
+        feat = feat.permute(0, 2, 1)  # (bs, c_dim, n_pc)
 
-        if n_points >= 30000:
-            c_list = []
-            for p_split in torch.split(p, 10000, dim=1):
-                raise NotImplementedError
-        else:
-            p = p.permute(0, 2, 1)
-            edge, x, _, yfeat = self._graph_feats(p, pc, feat, self.k, batch=node_tag)
-            x = torch.cat([edge, x, yfeat], dim=1)  # (bs, 20 * 2 * 3, n_pc, k)
-            x = self.conv1(x)  # (bs, hidden_size, n_pc, k)
-            x = self.conv2(x)
-            x = self.conv3(x)
-            # neighboor pool
-            c = x.max(dim=-1, keepdim=False)[0]  # (bs, 64, n_pc)
-            c = c.permute(0, 2, 1)
-            p = p.permute(0, 2, 1)
+        # if n_points >= 30000:
+        #     c_list = []
+        #     for p_split in torch.split(p, 10000, dim=1):
+        #         raise NotImplementedError
+        # else:
+        p = p.permute(0, 2, 1)
+        edge, x, _, yfeat, _ = self._graph_feats(p, pc, feat, self.k)
 
-        obj_codes = scatter(c.flatten(0, 1), node_tag, bs * n_obj, "amax")
-        obj_codes = obj_codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
+        x = torch.cat([edge, x, yfeat], dim=1)  # (bs, 20 * 2 * 3, n_pc, n_obj)
+        x = self.conv1(x)  # (bs, hidden_size, N, n_obj)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        # neighbor pool
+        c = x.max(dim=-1, keepdim=False)[0]  # (bs, 24, N)
+        c = c.permute(0, 2, 1)
+        p = p.permute(0, 2, 1)
 
         p = p.float()
         net = self.fc_p(p)  # (bs, n_points, hidden_size)
         # object wise points
-        net = net.unsqueeze(1).repeat(
-            1, n_obj, 1, 1
-        )  # (bs, n_obj, n_points, hidden_size)
+        # net = net.unsqueeze(1).repeat(
+        #     1, n_obj, 1, 1
+        # )  # (bs, n_obj, n_points, hidden_size)
 
         for i in range(self.n_blocks):
-            net = net + self.fc_c[i](obj_codes).unsqueeze(-2)
-
+            net = net + self.fc_c[i](c)
             net = self.blocks[i](net)
 
         out = self.fc_out(self.actvn(net))
         out = out.squeeze(-1)
 
+        # point_to_obj = node_tag[idx].view(bs, n_points, self.k)
+
         return out  # (bs, n_obj, n_points)
 
-    def _graph_feats(self, x, y, yfeat, k=20, batch=None):
+    def _graph_feats(self, x, y, yfeat, k=20):
         """
         used when target has extra feature dims
         :param x: (B, 3, N1)
@@ -240,41 +234,26 @@ class DGCNNDecoder(nn.Module):
         :return:
         """
         bs, _, n_points_x = x.shape
+        n_points_x = x.shape[2]
         n_points_y = y.shape[2]
-        n_obj = (batch.max() + 1) // bs
-        batch = batch.flatten()
 
         x = x.permute(0, 2, 1).view(bs * n_points_x, -1)
         y = y.permute(0, 2, 1).view(bs * n_points_y, -1)
         yfeat = yfeat.permute(0, 2, 1).view(bs * n_points_y, -1)
 
-        x_objwise = x.repeat(n_obj, 1)
+        batch_x = torch.arange(bs).repeat_interleave(n_points_x).to(x.device)
+        batch_y = torch.arange(bs).repeat_interleave(n_points_y).to(x.device)
 
-        batch_points = (
-            torch.arange(bs * n_obj)
-            .view(bs * n_obj, 1)
-            .repeat(1, n_points_x)
-            .view(-1)
-            .to(x.device)
-        )
+        # idx of shape (n_points_x,) with the index of the nearest center
+        src, dst = knn(y, x, k, batch_x=batch_y, batch_y=batch_x)
 
-        # TODO GAL neigbourhood size should not depend on batch size and number of objects
-        k = min(k, batch.bincount().min().item() - 1)
-        snd, dst = knn(
-            x_objwise, y, k, batch_x=batch_points, batch_y=batch
-        )  # (num_points * k,)
+        y = y[dst, :]
+        yfeat = yfeat[dst, :]
+        edge = y - x[src, :]
 
-        y = y[snd, :]
-        yfeat = yfeat[snd, :]
-        edge = y - x_objwise[dst, :]
+        y = y.view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
+        yfeat = yfeat.view(bs, n_points_x, k, -1).permute(0, 3, 1, 2)  # (bs, d, N, k)
+        edge = edge.view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
+        x = x[src, :].view(bs, n_points_x, k, 3).permute(0, 3, 1, 2)  # (bs, 3, N, k)
 
-        y = y.view(bs, n_points_y, k, 3).permute(0, 3, 1, 2)  # (bs, 3, n_pc, k)
-        yfeat = yfeat.view(bs, n_points_y, k, -1).permute(
-            0, 3, 1, 2
-        )  # (bs, d, n_pc, k)
-        edge = edge.view(bs, n_points_y, k, 3).permute(0, 3, 1, 2)  # (bs, 3, n_pc, k)
-        x = (
-            x_objwise[dst, :].view(bs, n_points_y, k, 3).permute(0, 3, 1, 2)
-        )  # (bs, 3, num_points, k)
-
-        return edge, x, y, yfeat
+        return edge, x, y, yfeat, dst

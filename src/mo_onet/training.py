@@ -51,34 +51,40 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
-        bs = data["points"].shape[0]
-        same_n_obj = all(
-            data["inputs.node_tags"][i].unique().shape[0]
-            == data["inputs.node_tags"][0].unique().shape[0]
-            for i in range(bs)
-        )
+        try:
+            bs = data["points"].shape[0]
+            same_n_obj = all(
+                data["inputs.node_tags"][i].unique().shape[0]
+                == data["inputs.node_tags"][0].unique().shape[0]
+                for i in range(bs)
+            )
 
-        # filter elements with different number of objects
-        mask = [data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)]
-        # print("mask\n", mask)
-        if not any(mask):
+            # filter elements with different number of objects
+            mask = [
+                data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)
+            ]
+            # print("mask\n", mask)
+            if not any(mask):
+                return 0.0
+            batch = {k: v[mask] for k, v in data.items()}
+            loss = self.compute_loss(batch)
+
+            # TODO (GAL) vmap is very slow right now. Try to go back to batching
+            # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
+            #     data, n_obj
+            # ).mean()
+
+            if loss < 0.005:
+                pass
+
+            if not val:
+                loss.backward()
+                self.optimizer.step()
+
+            return loss.item()
+        except Exception as e:
+            print(e)
             return 0.0
-        batch = {k: v[mask] for k, v in data.items()}
-        loss = self.compute_loss(batch)
-
-        # TODO (GAL) vmap is very slow right now. Try to go back to batching
-        # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
-        #     data, n_obj
-        # ).mean()
-
-        if loss < 0.005:
-            pass
-
-        if not val:
-            loss.backward()
-            self.optimizer.step()
-
-        return loss.item()
 
     def eval_step(self, data):
         """Performs an evaluation step.
@@ -176,27 +182,33 @@ class Trainer(BaseTrainer):
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
 
         # encoder
-        codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
+        codes, obj_batch = self.model.encode_multi_object(
+            inputs, torch.zeros_like(node_tag)
+        )
 
         pred_occ = self.model.decode_multi_object(
             p, codes, node_tag=obj_batch
         )  # (bs, n_obj, total_n_points)
 
+        ones_ratio = target_occ.sum() / target_occ.numel()
+        weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-3)
 
-        object_reconstruction_loss = (
-            F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
-            # average over points
-            .mean(-1)
-            # sum over objects
-            .sum(-1)
+        # object_reconstruction_loss = (
+        #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False)
+        #     # average over points
+        #     .mean(-1)
+        #     # sum over objects
+        #     .sum(-1)
+        # )
+
+        scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
+            pred_occ, target_occ, weight=weight
         )
 
-        # scene_reconstruction_loss = F.binary_cross_entropy_with_logits(pred_occ.sum(1), target_occ)
-
-        scene_reconstruction_loss = F.binary_cross_entropy(
-            F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
-        )
+        # scene_reconstruction_loss = F.binary_cross_entropy(
+        #     F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
+        # )
         # average over batch
-        total_loss = scene_reconstruction_loss + object_reconstruction_loss.mean(0)
+        total_loss = scene_reconstruction_loss  # + object_reconstruction_loss.mean(0)
 
         return total_loss

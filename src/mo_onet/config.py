@@ -5,7 +5,7 @@ import torch
 from src import data
 from src.common import decide_total_volume_range, update_reso
 from src.encoder import encoder_dict
-from src.mo_onet import generation, models, scene_builder, training
+from src.mo_onet import models, training, generation
 
 # TODO clean this up
 
@@ -70,8 +70,8 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
 
     # TODO (GAL) add additional configs
 
-    decoder = models.decoder_dict[decoder](c_dim=c_dim, **decoder_kwargs)
     encoder = encoder_dict[encoder](c_dim=c_dim, **encoder_kwargs)
+    decoder = models.decoder_dict[decoder](c_dim=c_dim + 8, **decoder_kwargs)
 
     segmenter = models.segmenter_dict[segmenter](
         n_points=n_nodes, n_classes=n_classes, **segmenter_kwargs
@@ -161,7 +161,6 @@ def get_generator(model, cfg, device, **kwargs):
 
     generator = generation.MultiObjectGenerator3D(
         model,
-        scene_builder=scene_builder.SceneBuilder(),
         device=device,
         threshold=cfg["test"]["threshold"],
         resolution0=cfg["generation"]["resolution_0"],

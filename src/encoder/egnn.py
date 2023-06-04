@@ -135,6 +135,7 @@ class EGNN(nn.Module):
         hidden_size=64,
         device="cuda",
         act_fn=nn.SiLU(),
+        task="node",
         n_layers=3,
         n_neighbors=5,
         residual=True,
@@ -163,6 +164,7 @@ class EGNN(nn.Module):
         self.n_layers = n_layers
         self.n_neighbors = n_neighbors
         self.eps = eps
+        self.task = task
 
         self.scalar_embedding_in = nn.Linear(2, self.hidden_size)
 
@@ -170,11 +172,6 @@ class EGNN(nn.Module):
 
         # readout
         self.scalar_readout = nn.Linear(self.hidden_size, c_dim)
-        self.readout_mix_net = nn.Sequential(
-            nn.Linear(self.hidden_size + 1, self.hidden_size),
-            act_fn,
-            nn.Linear(self.hidden_size, c_dim + 1),
-        )
 
         for i in range(0, n_layers):
             self.add_module(
@@ -202,13 +199,13 @@ class EGNN(nn.Module):
         """Encoder forward pass
 
         Args:
-            inputs (torch.Tensor): point cloud (bs, n_nodes, 3)
+            pc (torch.Tensor): point cloud (bs, n_nodes, 3)
             node_tag (torch.Tensor): node-wise instance tag (bs, n_nodes)
 
         Returns:
             Tuple with the scalar and the vector codes per object
         """
-        bs = pc.shape[0]
+        bs, n_nodes, _ = pc.shape
         n_obj = node_tag[0].max().item() + 1
         pc = pc.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
         node_tag = node_tag.view(-1)  # (bs * n_nodes,)
@@ -222,7 +219,12 @@ class EGNN(nn.Module):
         for i in range(0, self.n_layers):
             h, x, _ = self._modules[f"gcl_{i}"](h, edges, x, edge_attr=edge_attr)
 
-        s_codes, v_codes = self._readout(h, x, node_tag, bs, barycenters)
+        if self.task == "graph":
+            s_codes, v_codes = self._readout(h, x, node_tag, bs, barycenters)
+        elif self.task == "node":
+            s_codes = self.scalar_readout(h).view(bs, n_nodes, self.c_dim)
+            v_codes = x.view(bs, n_nodes, 3)
+
         return s_codes, v_codes
 
     def _transform(self, pc, node_tag, bs, n_obj, additional_scalars=None):

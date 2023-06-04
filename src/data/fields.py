@@ -162,6 +162,21 @@ class PointsField(Field):
 
         semantics = points_dict["semantics"]
 
+        # # zoom in on the points around the true occupancies
+        # xyz_min = np.min(points[occupancies == 1], axis=0) * 0.95
+        # xyz_max = np.max(points[occupancies == 1], axis=0) * 1.05
+        # ind = (
+        #     (points[:, 0] >= xyz_min[0])
+        #     & (points[:, 0] <= xyz_max[0])
+        #     & (points[:, 1] >= xyz_min[1])
+        #     & (points[:, 1] <= xyz_max[1])
+        #     & (points[:, 2] >= xyz_min[2])
+        #     & (points[:, 2] <= xyz_max[2])
+        # )
+        # points = points[ind]
+        # occupancies = occupancies[ind]
+        # semantics = semantics[ind]
+
         data = {None: points, "occ": occupancies, "semantics": semantics}
 
         if self.transform is not None:
