@@ -106,6 +106,7 @@ class Trainer(BaseTrainer):
 
         points_iou = data.get("points_iou").to(device)
         occ_iou = data.get("points_iou.occ").to(device)
+        node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
 
         batch_size = points.size(0)
 
@@ -125,7 +126,11 @@ class Trainer(BaseTrainer):
 
         # Compute iou
         with torch.no_grad():
-            p_out = self.model(points_iou, inputs, sample=self.eval_sample, **kwargs)
+            # p_out = self.model(points_iou, inputs, **kwargs)
+            codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
+            p_out = self.model.decode_multi_object(
+                points_iou, codes, node_tag=obj_batch
+            )  # (bs, n_obj, total_n_points)
 
         occ_iou_np = (occ_iou >= 0.5).cpu().numpy()
         occ_iou_hat_np = (p_out.probs >= threshold).cpu().numpy()
@@ -181,10 +186,7 @@ class Trainer(BaseTrainer):
         # TODO real instance segmentation
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
 
-        # encoder
-        codes, obj_batch = self.model.encode_multi_object(
-            inputs, torch.zeros_like(node_tag)
-        )
+        codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
 
         pred_occ = self.model.decode_multi_object(
             p, codes, node_tag=obj_batch

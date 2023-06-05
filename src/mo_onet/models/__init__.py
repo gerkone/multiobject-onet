@@ -36,6 +36,7 @@ class MultiObjectONet(nn.Module):
         self.object_encoder = object_encoder.to(device)
         self.scene_encoder = MOGConv(c_dim=8, hidden_size=16, n_neighbors=-1).to(device)
 
+        self._fake_segmentation = False
         self._device = device
 
     def forward(self, q, pc, **kwargs):
@@ -70,6 +71,8 @@ class MultiObjectONet(nn.Module):
             pc (tensor): the input point cloud (bs, n_points, 3)
             node_tag (tensor): the node-wise instance tag (bs, n_points)
         """
+        if self._fake_segmentation:
+            node_tag = torch.zeros_like(node_tag)
         bs = node_tag.shape[0]
         obj_node_tag = torch.zeros_like(node_tag, dtype=torch.long)
         for b in range(bs):
