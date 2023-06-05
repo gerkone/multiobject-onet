@@ -208,7 +208,10 @@ if __name__ == "__main__":
                 if checkpoint_every > 0 and (it % checkpoint_every) == 0:
                     print("Saving checkpoint")
                     checkpoint_io.save(
-                        "model.pt", epoch_it=epoch_it, it=it, loss_val_best=metric_val_best
+                        "model.pt",
+                        epoch_it=epoch_it,
+                        it=it,
+                        loss_val_best=metric_val_best,
                     )
 
                 # Backup if necessary
