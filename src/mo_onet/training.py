@@ -197,20 +197,22 @@ class Trainer(BaseTrainer):
 
         # object_reconstruction_loss = (
         #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False)
-        #     # average over points
-        #     .mean(-1)
+        #     # sum over points
+        #     .sum(-1)
         #     # sum over objects
         #     .sum(-1)
         # )
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, target_occ, weight=weight
-        )
+            pred_occ, target_occ, reduction="none", weight=weight
+        ).sum(-1)
 
         # scene_reconstruction_loss = F.binary_cross_entropy(
         #     F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
         # )
         # average over batch
-        total_loss = scene_reconstruction_loss  # + object_reconstruction_loss.mean(0)
+        total_loss = (
+            scene_reconstruction_loss.mean()
+        )  # + object_reconstruction_loss.mean()
 
         return total_loss
