@@ -138,11 +138,6 @@ class MultiObjectONet(nn.Module):
             return obj_logits
         # sum over objects in prob space
         probs = logits_to_probs(obj_logits, is_binary=True)
-        # total_probs = torch.sum(probs, dim=1)  # (bs, n_sample_points)
-        # # normalize
-        # total_probs = (total_probs - total_probs.min()) / (
-        #     total_probs.max() - total_probs.min()
-        # )
         total_probs = probs
         return dist.Bernoulli(probs=total_probs)
 

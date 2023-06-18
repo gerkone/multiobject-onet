@@ -192,27 +192,29 @@ class Trainer(BaseTrainer):
             p, codes, node_tag=obj_batch
         )  # (bs, n_obj, total_n_points)
 
+        assert pred_occ.shape == node_occs.shape, "Must return object-wise occupancy."
+
         ones_ratio = target_occ.sum() / target_occ.numel()
         weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-3)
 
-        # object_reconstruction_loss = (
-        #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False)
-        #     # sum over points
-        #     .sum(-1)
-        #     # sum over objects
-        #     .sum(-1)
-        # )
+        object_reconstruction_loss = (
+            F.binary_cross_entropy_with_logits(
+                pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False
+            )
+            # sum over points
+            .sum(-1)
+            # sum over objects
+            .sum(-1)
+        )
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
-            pred_occ, target_occ, reduction="none", weight=weight
+            pred_occ.sum(1), target_occ, reduction="none", weight=weight
         ).sum(-1)
 
-        # scene_reconstruction_loss = F.binary_cross_entropy(
-        #     F.sigmoid(pred_occ).sum(1).clamp(0, 1), target_occ
-        # )
         # average over batch
         total_loss = (
-            scene_reconstruction_loss.mean()
-        )  # + object_reconstruction_loss.mean()
+            0.5 * scene_reconstruction_loss.mean()
+            + 0.5 * object_reconstruction_loss.mean()
+        )
 
         return total_loss

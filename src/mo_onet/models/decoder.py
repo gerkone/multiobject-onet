@@ -125,7 +125,7 @@ class CBNDecoder(nn.Module):
 
 
 class DGCNNDecoder(nn.Module):
-    """Decoder for PointConv Baseline.
+    """Dynamic graph convolution decoder.
 
     Args:
         dim (int): input dimension
@@ -133,7 +133,7 @@ class DGCNNDecoder(nn.Module):
         hidden_size (int): hidden size of Decoder network
         leaky (bool): whether to use leaky ReLUs
         n_blocks (int): number of blocks ResNetBlockFC layers
-        sample_mode (str): sampling mode  for points
+        n_neighbors (int): number of neighbors to consider in knn graph
     """
 
     def __init__(
@@ -180,7 +180,7 @@ class DGCNNDecoder(nn.Module):
     def forward(self, p, codes, **kwargs):
         bs, n_points, _ = p.shape
 
-        node_tag = kwargs.get("node_tag")
+        node_tag = kwargs.get("node_tag", torch.zeros(bs * n_points, dtype=torch.long))
         node_tag = node_tag.flatten()
 
         n_obj = (node_tag.max() + 1) // bs
@@ -195,10 +195,10 @@ class DGCNNDecoder(nn.Module):
         #         raise NotImplementedError
         # else:
         p = p.permute(0, 2, 1)
-        edge, x, _, yfeat, _ = self._graph_feats(p, pc, feat, self.k)
+        edge, x, _, yfeat, idx = self._graph_feats(p, pc, feat)
 
-        x = torch.cat([edge, x, yfeat], dim=1)  # (bs, 20 * 2 * 3, n_pc, n_obj)
-        x = self.conv1(x)  # (bs, hidden_size, N, n_obj)
+        x = torch.cat([edge, x, yfeat], dim=1)  # (bs, 3 + 3 + hidden, N, k)
+        x = self.conv1(x)  # (bs, hidden_size, N, k)
         x = self.conv2(x)
         x = self.conv3(x)
         # neighbor pool
@@ -208,34 +208,30 @@ class DGCNNDecoder(nn.Module):
 
         p = p.float()
         net = self.fc_p(p)  # (bs, n_points, hidden_size)
-        # object wise points
-        # net = net.unsqueeze(1).repeat(
-        #     1, n_obj, 1, 1
-        # )  # (bs, n_obj, n_points, hidden_size)
 
         for i in range(self.n_blocks):
             net = net + self.fc_c[i](c)
             net = self.blocks[i](net)
 
-        out = self.fc_out(self.actvn(net))
-        out = out.squeeze(-1)
+        occ = self.fc_out(self.actvn(net))
+        occ = occ.squeeze(-1)  # (bs, n_points)
 
-        # point_to_obj = node_tag[idx].view(bs, n_points, self.k)
+        if self.training:
+            # object-wise occupancy assignment from nearest object to grid point
+            grid_to_obj = node_tag[idx.view(bs, n_points, self.k)[..., 0]]
+            obj_occ = torch.zeros((bs * n_obj, n_points), device=p.device)
+            obj_occ.scatter_add_(1, grid_to_obj, occ)
+            obj_occ = obj_occ.view(bs, n_obj, n_points)
+            occ = obj_occ
 
-        return out  # (bs, n_obj, n_points)
+        return occ  # (bs, n_obj, n_points)
 
-    def _graph_feats(self, x, y, yfeat, k=20):
-        """
-        used when target has extra feature dims
-        :param x: (B, 3, N1)
-        :param y: (B, 3, N2)
-        :param yfeat: (B, d, N2)
-        :param k:
-        :return:
-        """
+    def _graph_feats(self, x, y, yfeat):
         bs, _, n_points_x = x.shape
         n_points_x = x.shape[2]
         n_points_y = y.shape[2]
+
+        k = self.k
 
         x = x.permute(0, 2, 1).view(bs * n_points_x, -1)
         y = y.permute(0, 2, 1).view(bs * n_points_y, -1)

@@ -16,14 +16,14 @@ data:
 model:
   encoder: gconv
   encoder_kwargs:
-    hidden_size: 128
+    hidden_size: 64
     # n_layers: 4
     n_neighbors: 30
     # instance_norm: False
     # attention: False
   decoder: gconv_decoder      
   decoder_kwargs:
-    hidden_size: 128
+    hidden_size: 96
     n_blocks: 4
   segmenter: segmenter
   segmenter_kwargs: {}
@@ -33,8 +33,8 @@ training:
   batch_size: 4
   learning_rate: 0.0005
   print_every: 50
-  visualize_every: 1
-  checkpoint_every: 1000
+  visualize_every: 2000
+  checkpoint_every: 2000
   validate_every: 2000
   backup_every: 100000
   eval_sample: False
