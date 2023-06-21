@@ -6,6 +6,7 @@ from torch.distributions.utils import logits_to_probs
 from src.encoder.gconv import MOGConv
 from src.mo_onet.models import decoder, segmenter
 
+
 decoder_dict = {
     "e3_decoder": decoder.E3Decoder,
     "cbn_decoder": decoder.CBNDecoder,

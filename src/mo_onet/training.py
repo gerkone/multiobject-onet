@@ -29,6 +29,7 @@ class Trainer(BaseTrainer):
         input_type="pointcloud",
         vis_dir=None,
         threshold=0.5,
+        weighted_loss=False,
         eval_sample=False,
     ):
         self.model = model
@@ -37,12 +38,13 @@ class Trainer(BaseTrainer):
         self.input_type = input_type
         self.vis_dir = vis_dir
         self.threshold = threshold
+        self.weighted_loss = weighted_loss
         self.eval_sample = eval_sample
 
         if vis_dir is not None and not os.path.exists(vis_dir):
             os.makedirs(vis_dir)
 
-    def train_step(self, data, val=False):
+    def train_step(self, data):
         """Performs a training step.
 
         Args:
@@ -63,10 +65,12 @@ class Trainer(BaseTrainer):
             mask = [
                 data["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)
             ]
-            # print("mask\n", mask)
+
             if not any(mask):
-                return 0.0
+                return 0.0, 0
+
             batch = {k: v[mask] for k, v in data.items()}
+
             loss = self.compute_loss(batch)
 
             # TODO (GAL) vmap is very slow right now. Try to go back to batching
@@ -74,17 +78,13 @@ class Trainer(BaseTrainer):
             #     data, n_obj
             # ).mean()
 
-            if loss < 0.005:
-                pass
+            loss.backward()
+            self.optimizer.step()
 
-            if not val:
-                loss.backward()
-                self.optimizer.step()
-
-            return loss.item()
+            return loss.item(), batch["points"].shape[0]
         except Exception as e:
             print(e)
-            return 0.0
+            return None, None
 
     def eval_step(self, data):
         """Performs an evaluation step.
@@ -194,12 +194,15 @@ class Trainer(BaseTrainer):
 
         assert pred_occ.shape == node_occs.shape, "Must return object-wise occupancy."
 
-        ones_ratio = target_occ.sum() / target_occ.numel()
-        weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-3)
+        if self.weighted_loss:
+            ones_ratio = target_occ.sum() / target_occ.numel()
+            weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-3)
+        else:
+            weight = torch.ones_like(target_occ)
 
         object_reconstruction_loss = (
             F.binary_cross_entropy_with_logits(
-                pred_occ, node_occs, weight=weight.unsqueeze(1), reduce=False
+                pred_occ, node_occs, reduce=False
             )
             # sum over points
             .sum(-1)
@@ -213,8 +216,7 @@ class Trainer(BaseTrainer):
 
         # average over batch
         total_loss = (
-            0.5 * scene_reconstruction_loss.mean()
-            + 0.5 * object_reconstruction_loss.mean()
+            scene_reconstruction_loss.mean() + object_reconstruction_loss.mean()
         )
 
         return total_loss

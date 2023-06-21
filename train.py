@@ -156,15 +156,19 @@ if __name__ == "__main__":
     print(f"output path: {cfg['training']['out_dir']}")
 
     losses = []
+    bss = []
     while True:
         epoch_it += 1
         try:
             for batch in train_loader:
                 it += 1
-                loss = trainer.train_step(batch)
-                if loss > 0:
+
+                loss, actual_bs = trainer.train_step(batch)
+                if loss is not None:
                     logger.add_scalar("train/loss", loss, it)
                     losses.append(loss)
+                if actual_bs is not None:
+                    bss.append(actual_bs)
 
                 # Print output
                 if print_every > 0 and (it % print_every) == 0:
@@ -173,8 +177,14 @@ if __name__ == "__main__":
                         "%H:%M:%S", time.gmtime((t - t0).total_seconds())
                     )
                     loss = sum(losses) / len(losses)
+                    avg_bs = int(sum(bss) / len(bss))
                     losses = []
-                    print(f"[Epoch {epoch_it}] it={it}, train loss={loss:.3f}")
+                    bss = []
+                    print(
+                        f"[Epoch {epoch_it}] it={it}, "
+                        f"train loss={loss:.3f}, time={since}, "
+                        f"actual/real batch={avg_bs}/{batch_size}"
+                    )
 
                 # Visualize output
                 if visualize_every > 0 and (it % visualize_every) == 0:

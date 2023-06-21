@@ -110,6 +110,7 @@ def get_trainer(model, optimizer, cfg, device, **kwargs):
         input_type=input_type,
         vis_dir=vis_dir,
         threshold=threshold,
+        weighted_loss=cfg["training"]["weighted_loss"],
         eval_sample=cfg["training"]["eval_sample"],
     )
 
