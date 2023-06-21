@@ -14,11 +14,11 @@ data:
   multi_files: 10
   voxels_file: null
 model:
-  encoder: gconv
-  encoder_kwargs:
-    hidden_size: 64
+  encoder: pointnet_plus_plus
+  encoder_kwargs: {}
+    # hidden_size: 64
     # n_layers: 4
-    n_neighbors: 30
+    # n_neighbors: 30
     # instance_norm: False
     # attention: False
   decoder: gconv_decoder      

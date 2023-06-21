@@ -39,7 +39,7 @@ class E3Decoder(nn.Module):
 
     def forward(self, p, code, **kwargs):
         bs, n_sample_points, _ = p.shape
-        scalar_c, vector_c = code
+        vector_c, scalar_c = code
         bs, n_obj, _ = scalar_c.shape
 
         p2 = torch.sum(p * p, dim=2, keepdim=True).repeat(
@@ -104,7 +104,7 @@ class CBNDecoder(nn.Module):
 
     def forward(self, p, code, **kwargs):
         if isinstance(code, tuple):
-            code = code[0]
+            code = code[1]
 
         bs, n_obj, _ = code.shape
 
@@ -137,7 +137,7 @@ class DGCNNDecoder(nn.Module):
     """
 
     def __init__(
-        self, dim=3, c_dim=32, hidden_size=256, leaky=False, n_blocks=5, n_neighbors=20
+        self, c_dim=24, hidden_size=128, leaky=False, n_blocks=5, n_neighbors=20
     ):
         super().__init__()
         self.c_dim = c_dim
@@ -149,7 +149,7 @@ class DGCNNDecoder(nn.Module):
             [nn.Linear(c_dim, hidden_size) for _ in range(n_blocks)]
         )
 
-        self.fc_p = nn.Linear(dim, hidden_size)
+        self.fc_p = nn.Linear(3, hidden_size)
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(hidden_size) for _ in range(n_blocks)]
@@ -185,7 +185,7 @@ class DGCNNDecoder(nn.Module):
 
         n_obj = (node_tag.max() + 1) // bs
 
-        feat, pc = codes
+        pc, feat = codes
         pc = pc.permute(0, 2, 1)  # (bs, 3, n_pc)
         feat = feat.permute(0, 2, 1)  # (bs, c_dim, n_pc)
 

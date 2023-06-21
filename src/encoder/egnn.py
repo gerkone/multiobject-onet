@@ -203,7 +203,7 @@ class EGNN(nn.Module):
             node_tag (torch.Tensor): node-wise instance tag (bs, n_nodes)
 
         Returns:
-            Tuple with the scalar and the vector codes per object
+            Tuple with vector and scalar codes per object
         """
         bs, n_nodes, _ = pc.shape
         n_obj = node_tag[0].max().item() + 1
@@ -225,7 +225,7 @@ class EGNN(nn.Module):
             s_codes = self.scalar_readout(h).view(bs, n_nodes, self.c_dim)
             v_codes = x.view(bs, n_nodes, 3)
 
-        return s_codes, v_codes
+        return v_codes, s_codes
 
     def _transform(self, pc, node_tag, bs, n_obj, additional_scalars=None):
         # barycenters

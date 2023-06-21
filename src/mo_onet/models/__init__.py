@@ -96,19 +96,16 @@ class MultiObjectONet(nn.Module):
             1, 3 * n_obj
         )
 
-        scene_code = self.scene_encoder(keypoints, scene_batch)[0].mean(
+        scene_code = self.scene_encoder(keypoints, scene_batch)[1].mean(
             dim=1, keepdim=True
         )  # (bs, n_obj, scene_c_dim)
 
         # full codes = object codes + scene code
         n_nodes = obj_codes[0].shape[1]
-        if isinstance(obj_codes, tuple):
-            codes = (
-                torch.cat([obj_codes[0], scene_code.repeat(1, n_nodes, 1)], dim=-1),
-                obj_codes[1],
-            )
-        else:
-            codes = torch.cat([obj_codes, scene_code.repeat(1, n_obj, 1)], dim=-1)
+        codes = (
+            obj_codes[0],
+            torch.cat([obj_codes[1], scene_code.repeat(1, n_nodes, 1)], dim=-1),
+        )
 
         return codes, obj_batch
 

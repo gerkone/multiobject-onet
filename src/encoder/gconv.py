@@ -162,7 +162,7 @@ class MOGConv(nn.Module):
         # codes = scatter(code, node_tag.long(), bs * n_obj, "mean")  # (n_obj, c_dim)
         # codes = codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
 
-        return codes, pc
+        return pc, codes
 
     def _transform(self, x, k, batch):
         with torch.no_grad():
