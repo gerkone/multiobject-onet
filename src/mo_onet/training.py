@@ -133,10 +133,13 @@ class Trainer(BaseTrainer):
             )  # (bs, n_obj, total_n_points)
 
         occ_iou_np = (occ_iou >= 0.5).cpu().numpy()
-        occ_iou_hat_np = (p_out.probs >= threshold).cpu().numpy()
-
-        iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
-        eval_dict["iou"] = iou
+        for th in [0.3, threshold, 0.7, 0.9]:
+            occ_iou_hat_np = (p_out.probs >= th).cpu().numpy()
+            iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
+            if th == threshold:
+                eval_dict["iou"] = iou
+            else:
+                eval_dict[f"iou{int(th * 100)}%"] = iou
 
         # Estimate voxel iou
         if voxels_occ is not None:
@@ -200,15 +203,13 @@ class Trainer(BaseTrainer):
         else:
             weight = torch.ones_like(target_occ)
 
-        object_reconstruction_loss = (
-            F.binary_cross_entropy_with_logits(
-                pred_occ, node_occs, reduce=False
-            )
-            # sum over points
-            .sum(-1)
-            # sum over objects
-            .sum(-1)
-        )
+        # object_reconstruction_loss = (
+        #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
+        #     # sum over points
+        #     .sum(-1)
+        #     # sum over objects
+        #     .sum(-1)
+        # )
 
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
             pred_occ.sum(1), target_occ, reduction="none", weight=weight
@@ -216,7 +217,8 @@ class Trainer(BaseTrainer):
 
         # average over batch
         total_loss = (
-            scene_reconstruction_loss.mean() + object_reconstruction_loss.mean()
+            scene_reconstruction_loss.mean()
+            # + 0.5 * object_reconstruction_loss.mean()
         )
 
         return total_loss

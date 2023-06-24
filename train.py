@@ -25,6 +25,9 @@ if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser(description="Train a 3D reconstruction model.")
     parser.add_argument("--config", type=str, help="Path to config file.")
+    parser.add_argument(
+        "--new", action="store_true", help="Ignore checkpoints, start new training."
+    )
     parser.add_argument("--no-cuda", action="store_true", help="Do not use cuda.")
     parser.add_argument(
         "--exit-after",
@@ -128,13 +131,19 @@ if __name__ == "__main__":
     trainer = config.get_trainer(model, optimizer, cfg, device=device)
 
     checkpoint_io = CheckpointIO(out_dir, model=model, optimizer=optimizer)
-    try:
-        load_dict = checkpoint_io.load("model.pt")
-    except FileExistsError:
-        load_dict = dict()
-    epoch_it = load_dict.get("epoch_it", 0)
-    it = load_dict.get("it", 0)
-    metric_val_best = load_dict.get("loss_val_best", -model_selection_sign * np.inf)
+
+    if not args.new:
+        try:
+            load_dict = checkpoint_io.load("model.pt")
+        except FileExistsError:
+            load_dict = dict()
+        epoch_it = load_dict.get("epoch_it", 0)
+        it = load_dict.get("it", 0)
+        metric_val_best = load_dict.get("loss_val_best", -model_selection_sign * np.inf)
+    else:
+        epoch_it = 0
+        it = 0
+        metric_val_best = np.inf
 
     if metric_val_best == np.inf or metric_val_best == -np.inf:
         metric_val_best = -model_selection_sign * np.inf
@@ -177,7 +186,7 @@ if __name__ == "__main__":
                         "%H:%M:%S", time.gmtime((t - t0).total_seconds())
                     )
                     loss = sum(losses) / len(losses)
-                    avg_bs = int(sum(bss) / len(bss))
+                    avg_bs = round(sum(bss) / len(bss))
                     losses = []
                     bss = []
                     print(
@@ -204,9 +213,7 @@ if __name__ == "__main__":
                             os.path.join(
                                 out_dir,
                                 "vis",
-                                "{}_{}_{}.off".format(
-                                    it, data_vis["category"], data_vis["it"]
-                                ),
+                                f"{it}_{data_vis['category']}_{data_vis['it']}.off",
                             )
                         )
 
@@ -224,7 +231,7 @@ if __name__ == "__main__":
                 if backup_every > 0 and (it % backup_every) == 0:
                     print("Backup checkpoint")
                     checkpoint_io.save(
-                        "model_%d.pt" % it,
+                        f"model_{it}.pt",
                         epoch_it=epoch_it,
                         it=it,
                         loss_val_best=metric_val_best,
@@ -233,10 +240,12 @@ if __name__ == "__main__":
                 if validate_every > 0 and (it % validate_every) == 0:
                     eval_dict = trainer.evaluate(val_loader)
                     metric_val = eval_dict[model_selection_metric]
-                    print(f"Validation metric ({model_selection_metric}): {metric_val}")
+                    print("Model selection ({model_selection_metric}): {metric_val}")
+
+                    print("Validation results:", eval_dict)
 
                     for k, v in eval_dict.items():
-                        logger.add_scalar("val/%s" % k, v, it)
+                        logger.add_scalar(f"val/{k}", v, it)
 
                     if model_selection_sign * (metric_val - metric_val_best) > 0:
                         metric_val_best = metric_val

@@ -1,0 +1,52 @@
+method: mo_onet
+data:
+  input_type: pointcloud
+  classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
+  path: /local/disk1/gg/data/synthetic_0405
+  pointcloud_n: 2500
+  pointcloud_noise: 0.001
+  points_subsample: 1024
+  points_file: points_iou
+  item_file: item_dict
+  points_iou_file: points_iou
+  pointcloud_file: pointcloud
+  pointcloud_chamfer_file: pointcloud
+  multi_files: 10
+  voxels_file: null
+model:
+  encoder: gconv
+  encoder_kwargs:
+    hidden_size: 128
+    n_neighbors: 30
+  decoder: gconv_decoder      
+  decoder_kwargs:
+    hidden_size: 128
+    n_blocks: 4
+  segmenter: segmenter
+  segmenter_kwargs: {}
+  c_dim: 24
+training:
+  out_dir:  out/gconv/
+  batch_size: 4
+  learning_rate: 0.0005
+  print_every: 50
+  visualize_every: 500
+  checkpoint_every: 2000
+  validate_every: 500
+  backup_every: 100000
+  eval_sample: False
+  weighted_loss: True
+  model_selection_metric: iou
+  model_selection_mode: maximize
+  n_workers: 4
+  n_workers_val: 4
+test:
+  threshold: 0.5
+  eval_mesh: True
+  eval_pointcloud: True
+  remove_wall: False
+generation:
+  vis_n_outputs: 2
+  refine: false
+  n_x: 128
+  n_z: 1

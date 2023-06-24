@@ -3,9 +3,9 @@ data:
   input_type: pointcloud
   classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
   path: /local/disk1/gg/data/synthetic_0405
-  pointcloud_n: 5000
+  pointcloud_n: 2000
   pointcloud_noise: 0.001
-  points_subsample: 2048
+  points_subsample: 1024
   points_file: points_iou
   item_file: item_dict
   points_iou_file: points_iou
@@ -14,31 +14,31 @@ data:
   multi_files: 10
   voxels_file: null
 model:
-  encoder: pointnet_plus_plus
-  encoder_kwargs: {}
-    # hidden_size: 32
-    # n_layers: 5
-    # n_neighbors: 30
-    # instance_norm: True
-    # attention: False
+  encoder: egnn
+  encoder_kwargs: 
+    hidden_size: 96
+    n_layers: 5
+    n_neighbors: 30
+    instance_norm: True
+    attention: True
   decoder: gconv_decoder      
   decoder_kwargs:
     hidden_size: 128
-    n_blocks: 5
+    n_blocks: 4
     n_neighbors: 30
   segmenter: segmenter
   segmenter_kwargs: {}
-  c_dim: 56
+  c_dim: 24
 training:
-  out_dir: out/
-  batch_size: 6
+  out_dir: out/egnn/
+  batch_size: 4
   learning_rate: 0.0005
   print_every: 50
-  visualize_every: 2000
+  visualize_every: 500
   checkpoint_every: 2000
   validate_every: 500
   backup_every: 100000
-  weighted_loss: True # set to true with GConv models, false with pointnet
+  weighted_loss: True
   eval_sample: False
   model_selection_metric: iou
   model_selection_mode: maximize
