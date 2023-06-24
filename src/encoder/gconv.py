@@ -103,7 +103,6 @@ class MOGConv(nn.Module):
             node_tag (torch.Tensor): Node tag index for aggregation (bs, n_nodes)
         """
         bs, n_nodes, _ = pc.shape
-        n_obj = node_tag[0].max().item() + 1
         node_tag = node_tag.view(-1)  # (bs * n_nodes,)
 
         x = pc.clone()
@@ -158,7 +157,9 @@ class MOGConv(nn.Module):
         # readout to global code
         code = self.readout(x1).permute(1, 0)  # (bs * n_nodes, c_dim)
         codes = code.view(bs, n_nodes, -1)  # (bs, n_nodes, c_dim)
+
         # collect codes on objects
+        # n_obj = node_tag[0].max().item() + 1
         # codes = scatter(code, node_tag.long(), bs * n_obj, "mean")  # (n_obj, c_dim)
         # codes = codes.view(bs, n_obj, -1)  # (bs, n_obj, c_dim)
 

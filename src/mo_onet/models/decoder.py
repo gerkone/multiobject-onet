@@ -220,8 +220,9 @@ class DGCNNDecoder(nn.Module):
             # object-wise occupancy assignment from nearest object to grid point
             grid_to_obj = node_tag[idx.view(bs, n_points, self.k)[..., 0]]
             obj_occ = torch.zeros((bs * n_obj, n_points), device=p.device)
-            obj_occ.scatter_add_(1, grid_to_obj, occ)
+            obj_occ.scatter_add_(0, grid_to_obj, occ)
             obj_occ = obj_occ.view(bs, n_obj, n_points)
+            assert (obj_occ.sum(1) - occ).sum() < 1e-8
             occ = obj_occ
 
         return occ  # (bs, n_obj, n_points)
