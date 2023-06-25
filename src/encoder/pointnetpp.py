@@ -33,7 +33,7 @@ class PointNetSetAbstraction(nn.Module):
             points = points.permute(0, 2, 1)
 
         if self.group_all:
-            new_xyz, new_points = sample_and_group_all(xyz, points, idx)
+            new_xyz, new_points = sample_and_group_all(xyz, points)
             new_idx = idx
         else:
             obj_counts = idx.unique(return_counts=True)[1] - 1
@@ -44,8 +44,7 @@ class PointNetSetAbstraction(nn.Module):
         # new_xyz: sampled points position data, [B, npoint, C]
         # new_points: sampled points data, [B, npoint, nsample, C+D]
         new_points = new_points.permute(0, 3, 2, 1)  # [B, C+D, nsample,npoint]
-        for i, conv in enumerate(self.mlp_convs):
-            bn = self.mlp_bns[i]
+        for conv, bn in zip(self.mlp_convs, self.mlp_bns):
             new_points = F.relu(bn(conv(new_points)))
 
         new_points = torch.max(new_points, 2)[0]
@@ -78,7 +77,7 @@ class PointNetFeaturePropagation(nn.Module):
         xyz2 = xyz2.permute(0, 2, 1)
 
         points2 = points2.permute(0, 2, 1)
-        B, N, C = xyz1.shape
+        B, N, _ = xyz1.shape
         _, S, _ = xyz2.shape
 
         if S == 1:
@@ -90,6 +89,7 @@ class PointNetFeaturePropagation(nn.Module):
             dist_recip = 1.0 / (dists + 1e-8)
             norm = torch.sum(dist_recip, dim=2, keepdim=True)
             weight = dist_recip / norm
+            # set inter-object weights to 0
             weight = torch.where(dists > 1e8, torch.zeros_like(weight), weight)
             weight = torch.nan_to_num(weight)
 
@@ -104,59 +104,9 @@ class PointNetFeaturePropagation(nn.Module):
             new_points = interpolated_points
 
         new_points = new_points.permute(0, 2, 1)
-        for i, conv in enumerate(self.mlp_convs):
-            bn = self.mlp_bns[i]
+        for conv, bn in zip(self.mlp_convs, self.mlp_bns):
             new_points = F.relu(bn(conv(new_points)))
         return new_points
-
-
-class PointNetPlusPlus(nn.Module):
-    def __init__(self, c_dim=128):
-        super(PointNetPlusPlus, self).__init__()
-
-        self.sa1 = PointNetSetAbstraction(
-            npoint=512,
-            radius=0.2,
-            nsample=32,
-            in_channel=6,
-            mlp=[64, 64, 128],
-            group_all=False,
-        )
-        self.sa2 = PointNetSetAbstraction(
-            npoint=128,
-            radius=0.4,
-            nsample=64,
-            in_channel=128 + 3,
-            mlp=[128, 128, 256],
-            group_all=False,
-        )
-        self.sa3 = PointNetSetAbstraction(
-            npoint=None,
-            radius=None,
-            nsample=None,
-            in_channel=256 + 3,
-            mlp=[256, 512, 1024],
-            group_all=True,
-        )
-        self.fp3 = PointNetFeaturePropagation(in_channel=1280, mlp=[256, 256])
-        self.fp2 = PointNetFeaturePropagation(in_channel=384, mlp=[256, 128])
-        self.fp1 = PointNetFeaturePropagation(in_channel=128, mlp=[128, 128, c_dim])
-
-    def forward(self, xyz, node_tag=None):
-        xyz = xyz.permute(0, 2, 1)
-        l0_points = xyz
-        l0_xyz = xyz[:, :3, :]
-        l0_ptr = node_tag
-
-        l1_xyz, l1_points, l1_ptr = self.sa1(l0_xyz, l0_points, l0_ptr)
-        l2_xyz, l2_points, l2_ptr = self.sa2(l1_xyz, l1_points, l1_ptr)
-        l3_xyz, l3_points, l3_ptr = self.sa3(l2_xyz, l2_points, l2_ptr)
-
-        l2_points = self.fp3(l2_xyz, l3_xyz, l2_points, l3_points, l2_ptr, l3_ptr)
-        l1_points = self.fp2(l1_xyz, l2_xyz, l1_points, l2_points, l1_ptr, l2_ptr)
-        l0_points = self.fp1(l0_xyz, l1_xyz, None, l1_points, l0_ptr, l1_ptr)
-
-        return xyz.permute(0, 2, 1), l0_points.permute(0, 2, 1)
 
 
 def square_distance(src, dst, batchx=None, batchy=None):
@@ -183,10 +133,9 @@ def square_distance(src, dst, batchx=None, batchy=None):
     dist += torch.sum(src**2, -1).view(B, N, 1)
     dist += torch.sum(dst**2, -1).view(B, 1, M)
     # TODO: not the best way
-    if batchx is None:
-        batchx = torch.zeros(B, N, dtype=torch.long, device=src.device)
-    if batchy is None:
-        batchy = torch.zeros(B, M, dtype=torch.long, device=src.device)
+    if batchx is None or batchy is None:
+        batchx = torch.arange(B, dtype=torch.long).repeat_interleave(N).to(dst.device)
+        batchy = torch.arange(B, dtype=torch.long).repeat_interleave(M).to(dst.device)
     dist = torch.where(batchx.view(B, N, 1) == batchy.view(B, 1, M), dist, torch.inf)
     return dist
 
@@ -310,7 +259,7 @@ def sample_and_group(npoint, radius, nsample, xyz, points, ptr=None, returnfps=F
         return new_xyz, new_points, new_ptr
 
 
-def sample_and_group_all(xyz, points, ptr=None):
+def sample_and_group_all(xyz, points):
     """
     Input:
         xyz: input points position data, [B, N, 3]
@@ -328,3 +277,52 @@ def sample_and_group_all(xyz, points, ptr=None):
     else:
         new_points = grouped_xyz
     return new_xyz, new_points
+
+
+class PointNetPlusPlus(nn.Module):
+    def __init__(self, c_dim=128):
+        super().__init__()
+
+        self.sa1 = PointNetSetAbstraction(
+            npoint=512,
+            radius=0.2,
+            nsample=32,
+            in_channel=6,
+            mlp=[64, 64, 128],
+            group_all=False,
+        )
+        self.sa2 = PointNetSetAbstraction(
+            npoint=128,
+            radius=0.4,
+            nsample=64,
+            in_channel=128 + 3,
+            mlp=[128, 128, 256],
+            group_all=False,
+        )
+        self.sa3 = PointNetSetAbstraction(
+            npoint=None,
+            radius=None,
+            nsample=None,
+            in_channel=256 + 3,
+            mlp=[256, 512, 1024],
+            group_all=True,
+        )
+        self.fp3 = PointNetFeaturePropagation(in_channel=1280, mlp=[256, 256])
+        self.fp2 = PointNetFeaturePropagation(in_channel=384, mlp=[256, 128])
+        self.fp1 = PointNetFeaturePropagation(in_channel=128, mlp=[128, 128, c_dim])
+
+    def forward(self, xyz, node_tag=None):
+        xyz = xyz.permute(0, 2, 1)
+        l0_points = xyz
+        l0_xyz = xyz[:, :3, :]
+        l0_ptr = node_tag
+
+        l1_xyz, l1_points, l1_ptr = self.sa1(l0_xyz, l0_points, l0_ptr)
+        l2_xyz, l2_points, l2_ptr = self.sa2(l1_xyz, l1_points, l1_ptr)
+        l3_xyz, l3_points, l3_ptr = self.sa3(l2_xyz, l2_points, l2_ptr)
+
+        l2_points = self.fp3(l2_xyz, l3_xyz, l2_points, l3_points, l2_ptr, l3_ptr)
+        l1_points = self.fp2(l1_xyz, l2_xyz, l1_points, l2_points, l1_ptr, l2_ptr)
+        l0_points = self.fp1(l0_xyz, l1_xyz, None, l1_points, l0_ptr, l1_ptr)
+
+        return xyz.permute(0, 2, 1), l0_points.permute(0, 2, 1)

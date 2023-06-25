@@ -216,7 +216,9 @@ class DGCNNDecoder(nn.Module):
         occ = self.fc_out(self.actvn(net))
         occ = occ.squeeze(-1)  # (bs, n_points)
 
-        if self.training:
+        obj_wise_occ = kwargs.get("obj_wise_occ", False) or self.training
+
+        if obj_wise_occ:
             # object-wise occupancy assignment from nearest object to grid point
             grid_to_obj = node_tag[idx.view(bs, n_points, self.k)[..., 0]]
             obj_occ = torch.zeros((bs * n_obj, n_points), device=p.device)
