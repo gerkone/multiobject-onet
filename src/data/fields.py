@@ -10,11 +10,8 @@ from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
 from src.utils.segment import (
-    get_bboxes,
     segment_objects,
-    separate_occ,
-    separate_occ_sm,
-    segment_objects_sm,
+    separate_occ
 )
 
 
@@ -367,22 +364,20 @@ class PointCloudField(Field):
 
         if self.multi_object:
             semantics = pointcloud_dict["semantics"].astype(np.int64)
+            instances = pointcloud_dict["instances"].astype(np.int64)
             data["semantics"] = semantics.copy().astype(np.int32)
+            data["instances"] = instances.copy().astype(np.int32)
 
             item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
             item_dict = np.load(item_file_path, allow_pickle=True)
 
-            bboxes = get_bboxes(item_dict["bboxes"], item_dict["xz_groundplane_range"])
-            # segmented, bboxes3d = segment_objects(semantics)
-            segmented = segment_objects_sm(semantics)
+            segmented = segment_objects(instances)
             data["node_tags"] = segmented.astype(np.int32)  # semantically separated
 
-            points_iou_pc = points_iou[None]
-            points_iou_occ = points_iou["occ"]
-            points_iou_sem = points_iou["semantics"]
-            # segmented_occ = separate_occ(points_iou_pc, points_iou_occ, bboxes3d)
-            segmented_occ, sem = separate_occ_sm(points_iou_sem)
-            data["node_occs"] = segmented_occ  # N, occ_points
+            points_iou_inst = points_iou["instances"]
+            num_objects = len(np.unique(points_iou_inst)) - 1
+            segmented_occ, idx = separate_occ(points_iou_inst, N=num_objects)
+            data["node_occs"] = segmented_occ  # (N, occ_points)
 
         if self.transform is not None:
             data = self.transform(data)
