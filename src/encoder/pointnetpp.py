@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,7 +35,7 @@ class PointNetSetAbstraction(nn.Module):
             new_xyz, new_points = sample_and_group_all(xyz, points)
             new_idx = idx
         else:
-            obj_counts = idx.unique(return_counts=True)[1] - 1
+            obj_counts = idx.unique(return_counts=True)[1]  # - 1
             min_nsample = min(self.nsample, obj_counts.min())
             new_xyz, new_points, new_idx = sample_and_group(
                 self.npoint, self.radius, min_nsample, xyz, points, idx
@@ -207,7 +206,7 @@ def query_ball_point(radius, nsample, xyz, new_xyz, batchx=None, batchy=None):
         group_idx: grouped points index, [B, S, nsample]
     """
     device = xyz.device
-    B, N, C = xyz.shape
+    B, N, _ = xyz.shape
     _, S, _ = new_xyz.shape
     group_idx = (
         torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
@@ -215,7 +214,10 @@ def query_ball_point(radius, nsample, xyz, new_xyz, batchx=None, batchy=None):
     sqrdists = square_distance(new_xyz, xyz, batchx, batchy)
     group_idx[sqrdists > radius**2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
-    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+    try:
+        group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+    except:
+        print(group_idx.shape)
     mask = group_idx == N
     group_idx[mask] = group_first[mask]
     return group_idx

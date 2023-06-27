@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_cluster import knn_graph
 
 from .utils import scatter
+from src.layers import VNLinearLeakyReLU, VNStdFeature, VNMaxPool, mean_pool
 
 
 class MOGConv(nn.Module):
@@ -108,27 +110,25 @@ class MOGConv(nn.Module):
         x = pc.clone()
         x = x.view(-1, 3).squeeze()  # (bs * n_nodes, 3)
 
-        k = self.n_neighbors
-
-        x, idx = self._transform(x, k, node_tag)  # (3, bs * n_nodes, k)
+        x, idx = self._transform(x, node_tag)  # (3, bs * n_nodes, k)
         x = self.conv1(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv2(x)
         x = x.permute(1, 2, 0)
         x1 = scatter(x, idx, bs * n_nodes, "amax")  # (bs * n_nodes, hidden_size)
 
-        x, idx = self._transform(x1, k, node_tag)  # (hidden_size, bs * n_nodes)
+        x, idx = self._transform(x1, node_tag)  # (hidden_size, bs * n_nodes)
         x = self.conv3(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv4(x)
         x = x.permute(1, 2, 0)
         x2 = scatter(x, idx, bs * n_nodes, "amax") + x1  # (hidden_size, bs * n_nodes)
 
-        x, idx = self._transform(x2, k, node_tag)  # (hidden_size, bs * n_nodes)
+        x, idx = self._transform(x2, node_tag)  # (hidden_size, bs * n_nodes)
         x = self.conv5(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv6(x)
         x = x.permute(1, 2, 0)
         x3 = scatter(x, idx, bs * n_nodes, "amax") + x2  # (bs * n_nodes, hidden_size)
 
-        x, idx = self._transform(x3, k, node_tag)  # (hidden_size, bs * n_nodes)
+        x, idx = self._transform(x3, node_tag)  # (hidden_size, bs * n_nodes)
         x = self.conv7(x)  # (hidden_size, bs * n_nodes, k)
         x = self.conv8(x)
         x = x.permute(1, 2, 0)
@@ -165,10 +165,10 @@ class MOGConv(nn.Module):
 
         return pc, codes
 
-    def _transform(self, x, k, batch):
+    def _transform(self, x, batch):
         with torch.no_grad():
             if self.n_neighbors != -1:
-                idx = knn_graph(x, k, batch)[0]
+                idx = knn_graph(x, self.n_neighbors, batch)[0]
             else:
                 # fully connected
                 idx = torch.arange(x.shape[0]).repeat(x.shape[0], 1).flatten()
@@ -176,3 +176,113 @@ class MOGConv(nn.Module):
 
         feature = x[idx].view(x.shape[1], idx.shape[0], 1)
         return feature, idx
+
+
+class EMOGConv(nn.Module):
+    def __init__(self, c_dim=128, n_neighbors=20, pooling="max"):
+        super().__init__()
+        self.c_dim = c_dim
+        assert n_neighbors < 100, "n_neighbors should be less than 100"
+        self.n_neighbors = n_neighbors
+
+        self.conv1 = VNLinearLeakyReLU(2, 64 // 3)
+        self.conv2 = VNLinearLeakyReLU(64 // 3 * 2, 64 // 3)
+        self.conv3 = VNLinearLeakyReLU(64 // 3 * 2, 128 // 3)
+        self.conv4 = VNLinearLeakyReLU(128 // 3 * 2, 256 // 3)
+
+        self.conv5 = VNLinearLeakyReLU(
+            256 // 3 + 128 // 3 + 64 // 3 * 2, 1024 // 3, dim=4, share_nonlinearity=True
+        )
+
+        self.std_feature = VNStdFeature(1024 // 3 * 2, dim=4, normalize_frame=False)
+        self.linear1 = nn.Linear((1024 // 3) * 12, 512)
+
+        self.bn1 = nn.BatchNorm1d(512)
+        self.dp1 = nn.Dropout(p=0.5)
+        self.linear2 = nn.Linear(512, 256)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.dp2 = nn.Dropout(p=0.5)
+        self.linear3 = nn.Linear(256, c_dim)
+
+        if pooling == "max":
+            self.pool1 = VNMaxPool(64 // 3)
+            self.pool2 = VNMaxPool(64 // 3)
+            self.pool3 = VNMaxPool(128 // 3)
+            self.pool4 = VNMaxPool(256 // 3)
+        elif pooling == "mean":
+            self.pool1 = mean_pool
+            self.pool2 = mean_pool
+            self.pool3 = mean_pool
+            self.pool4 = mean_pool
+
+    def forward(self, x, node_tag):
+        bs = x.size(0)
+        x = x.unsqueeze(1)
+        k = self.n_neighbors
+
+        x = self._transform(x, k, node_tag)
+        x = self.conv1(x)
+        x1 = self.pool1(x)
+
+        x = self._transform(x1, k, node_tag)
+        x = self.conv2(x)
+        x2 = self.pool2(x)
+
+        x = self._transform(x2, k, node_tag)
+        x = self.conv3(x)
+        x3 = self.pool3(x)
+
+        x = self._transform(x3, k, node_tag)
+        x = self.conv4(x)
+        x4 = self.pool4(x)
+
+        x = torch.cat((x1, x2, x3, x4), dim=1)
+        x = self.conv5(x)
+
+        num_points = x.size(-1)
+        x_mean = x.mean(dim=-1, keepdim=True).expand(x.size())
+        x = torch.cat((x, x_mean), 1)
+        x, trans = self.std_feature(x)
+        x = x.view(bs, -1, num_points)
+
+        x1 = F.adaptive_max_pool1d(x, 1).view(bs, -1)
+        x2 = F.adaptive_avg_pool1d(x, 1).view(bs, -1)
+        x = torch.cat((x1, x2), 1)
+
+        x = F.leaky_relu(self.bn1(self.linear1(x)), negative_slope=0.2)
+        x = self.dp1(x)
+        x = F.leaky_relu(self.bn2(self.linear2(x)), negative_slope=0.2)
+        x = self.dp2(x)
+        x = self.linear3(x)
+
+        return x
+
+    def _transform(self, x, batch):
+        bs, _, num_points = x.shape
+        x = x.view(bs, -1, num_points)
+        with torch.no_grad():
+            if self.n_neighbors != -1:
+                idx = knn_graph(x, self.n_neighbors, batch)[0]
+            else:
+                # fully connected
+                idx = torch.arange(x.shape[0]).repeat(x.shape[0], 1).flatten()
+
+        idx_base = torch.arange(0, bs, device=x.device).view(-1, 1, 1) * num_points
+
+        idx = idx + idx_base
+
+        idx = idx.view(-1)
+
+        _, num_dims, _ = x.size()
+        num_dims = num_dims // 3
+
+        x = x.transpose(
+            2, 1
+        ).contiguous()  # (bs, num_points, num_dims)  -> (bs*num_points, num_dims) #   bs * num_points * k + range(0, bs*num_points)
+        feature = x.view(bs * num_points, -1)[idx, :]
+        feature = feature.view(bs, num_points, self.n_neighbors, num_dims, 3)
+        x = x.view(bs, num_points, 1, num_dims, 3).repeat(1, 1, self.n_neighbors, 1, 1)
+
+        feature = torch.cat((feature - x, x), dim=3).permute(0, 3, 4, 1, 2).contiguous()
+
+        return feature

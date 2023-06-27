@@ -88,7 +88,6 @@ class MultiObjectGenerator3D(object):
         # TODO get from segmentation
         node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
 
-        kwargs = {}
 
         t0 = time.time()
 
@@ -300,7 +299,7 @@ class MultiObjectGenerator3D(object):
             vol_bound (dict): volume boundary
         """
         raise NotImplementedError
-        if vol_bound == None:
+        if vol_bound is None:
             vol_bound = self.vol_bound
 
         index = {}

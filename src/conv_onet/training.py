@@ -1,13 +1,10 @@
 import os
 
 import torch
-from torch import distributions as dist
 from torch.nn import functional as F
-from tqdm import trange
 
 from src.common import add_key, compute_iou, make_3d_grid
 from src.training import BaseTrainer
-from src.utils import visualize as vis
 
 
 class Trainer(BaseTrainer):
@@ -72,7 +69,7 @@ class Trainer(BaseTrainer):
         eval_dict = {}
 
         points = data.get("points").to(device)
-        occ = data.get("points.occ").to(device)
+        data.get("points.occ").to(device)
 
         inputs = data.get("inputs", torch.empty(points.size(0), 0)).to(device)
         voxels_occ = data.get("voxels")

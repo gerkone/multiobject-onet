@@ -2,24 +2,19 @@ import argparse
 import datetime
 import os
 import time
+import shutil
+from collections import defaultdict
 
-import matplotlib
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 import numpy as np
 import torch
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 
-matplotlib.use("Agg")
-import shutil
-from collections import defaultdict
-
 from src import config, data
 from src.checkpoints import CheckpointIO
-
-# TODO for now
-import warnings
-
-warnings.filterwarnings("ignore", category=UserWarning)
 
 if __name__ == "__main__":
     # Arguments
@@ -47,6 +42,7 @@ if __name__ == "__main__":
     # Shorthands
     out_dir = cfg["training"]["out_dir"]
     batch_size = cfg["training"]["batch_size"]
+    sequential_batches = cfg["training"]["sequential_batches"]
     backup_every = cfg["training"]["backup_every"]
     vis_n_outputs = cfg["generation"]["vis_n_outputs"]
     exit_after = args.exit_after
@@ -127,6 +123,7 @@ if __name__ == "__main__":
 
     # Intialize training
     optimizer = optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.85)
     # optimizer = optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
     trainer = config.get_trainer(model, optimizer, cfg, device=device)
 
@@ -169,10 +166,19 @@ if __name__ == "__main__":
     while True:
         epoch_it += 1
         try:
-            for batch in train_loader:
+            train_iter = iter(train_loader)
+            for batch in train_iter:
                 it += 1
 
-                loss, actual_bs = trainer.train_step(batch)
+                if sequential_batches > 1:
+                    batches = [batch]
+                    for _ in range(sequential_batches - 1):
+                        batches.append(next(train_iter))
+                else:
+                    batches = batch
+
+                loss, actual_bs = trainer.train_step(batches)
+
                 if loss is not None:
                     logger.add_scalar("train/loss", loss, it)
                     losses.append(loss)
@@ -240,7 +246,7 @@ if __name__ == "__main__":
                 if validate_every > 0 and (it % validate_every) == 0:
                     eval_dict = trainer.evaluate(val_loader)
                     metric_val = eval_dict[model_selection_metric]
-                    print("Model selection ({model_selection_metric}): {metric_val}")
+                    print(f"Model selection ({model_selection_metric}): {metric_val}")
 
                     print("Validation results:", eval_dict)
 
@@ -267,6 +273,8 @@ if __name__ == "__main__":
                         loss_val_best=metric_val_best,
                     )
                     exit(3)
+            if scheduler.get_last_lr()[0] > 5e-5:
+                scheduler.step()
         except Exception as e:
-            print(e)
+            print(f"ERROR (main) {e.__doc__}: {e}")
             pass
