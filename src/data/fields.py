@@ -1,18 +1,11 @@
-import glob
 import os
-import random
 
 import numpy as np
-from PIL import Image
-from sklearn.cluster import KMeans
 
 from src.common import coord2index, normalize_coord
 from src.data.core import Field
 from src.utils import binvox_rw
-from src.utils.segment import (
-    segment_objects,
-    separate_occ
-)
+from src.utils.segment import segment_objects
 
 
 class IndexField(Field):
@@ -368,16 +361,17 @@ class PointCloudField(Field):
             data["semantics"] = semantics.copy().astype(np.int32)
             data["instances"] = instances.copy().astype(np.int32)
 
-            item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
-            item_dict = np.load(item_file_path, allow_pickle=True)
+            # item_file_path = os.path.join(model_path, f"{self.item_file_name}.npz")
+            # item_dict = np.load(item_file_path, allow_pickle=True)
 
             segmented = segment_objects(instances)
             data["node_tags"] = segmented.astype(np.int32)  # semantically separated
 
-            points_iou_inst = points_iou["instances"]
-            num_objects = len(np.unique(points_iou_inst)) - 1
-            segmented_occ, idx = separate_occ(points_iou_inst, N=num_objects)
-            data["node_occs"] = segmented_occ  # (N, occ_points)
+            # TODO (NINA)
+            # points_iou_inst = points_iou["instances"]
+            # num_objects = len(np.unique(points_iou_inst)) - 1
+            # segmented_occ, idx = separate_occ(points_iou_inst, N=num_objects)
+            # data["node_occs"] = segmented_occ  # (N, occ_points)
 
         if self.transform is not None:
             data = self.transform(data)

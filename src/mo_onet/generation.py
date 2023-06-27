@@ -88,7 +88,6 @@ class MultiObjectGenerator3D(object):
         # TODO get from segmentation
         node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
 
-
         t0 = time.time()
 
         # obtain features for all crops

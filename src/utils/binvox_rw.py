@@ -174,7 +174,6 @@ def read_as_coord_array(fp, fix_coords=True):
 
     values, counts = raw_data[::2], raw_data[1::2]
 
-    sz = np.prod(dims)
     index, end_index = 0, 0
     end_indices = np.cumsum(counts)
     indices = np.concatenate(([0], end_indices[:-1])).astype(end_indices.dtype)
@@ -258,7 +257,7 @@ def write(voxel_model, fp):
     fp.write("translate " + " ".join(map(str, voxel_model.translate)) + "\n")
     fp.write("scale " + str(voxel_model.scale) + "\n")
     fp.write("data\n")
-    if not voxel_model.axis_order in ("xzy", "xyz"):
+    if voxel_model.axis_order not in ("xzy", "xyz"):
         raise ValueError("Unsupported voxel model axis order")
 
     if voxel_model.axis_order == "xzy":

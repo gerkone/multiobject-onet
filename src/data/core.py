@@ -1,6 +1,7 @@
 import logging
 import os
 
+import torch
 import numpy as np
 import yaml
 from torch.utils import data
@@ -194,8 +195,8 @@ class Shapes3dDataset(data.Dataset):
         except Exception as e:
             if self.no_except:
                 logger.warn(
-                    "Error occured when loading field %s of model %s.\nError msg: %s"
-                    % (field_name, model, e)
+                    f"Error occured when loading field {field_name} of model {model}.\n"
+                    f"Error msg: {e.__doc__} {e}."
                 )
                 return None
             else:

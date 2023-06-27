@@ -2,8 +2,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-import src.common as common
-
 
 def visualize_data(data, data_type, out_file):
     r"""Visualizes the data with regard to its type.

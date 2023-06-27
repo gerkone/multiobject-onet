@@ -21,7 +21,6 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     decoder = cfg["model"]["decoder"]
     segmenter = cfg["model"]["segmenter"]
     encoder = cfg["model"]["encoder"]
-    dim = cfg["data"]["dim"]
     n_nodes = cfg["data"]["pointcloud_n"]
     c_dim = cfg["model"]["c_dim"]
     decoder_kwargs = cfg["model"]["decoder_kwargs"]
@@ -29,8 +28,6 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     # TODO
     n_classes = 4  # cfg["data"]["n_classes"]
     encoder_kwargs = cfg["model"]["encoder_kwargs"]
-
-    padding = cfg["data"]["padding"]
 
     # for pointcloud_crop
     try:
