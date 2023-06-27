@@ -1,8 +1,8 @@
 method: mo_onet
 data:
   input_type: pointcloud
-  classes: ["rooms_04"] #, "rooms_05"] #, "rooms_06", "rooms_07", "rooms_08"]
-  path: /local/disk1/gg/data/synthetic_0405
+  classes: ["rooms_04", "rooms_05", "rooms_06", "rooms_07", "rooms_08"]
+  path: /local/disk1/gg/data/synthetic_room_dataset_mo
   pointcloud_n: 5000
   pointcloud_noise: 0.001
   points_subsample: 2048
@@ -19,22 +19,22 @@ model:
   decoder: gconv_decoder      
   decoder_kwargs:
     hidden_size: 128
-    n_blocks: 4
+    n_blocks: 5
     n_neighbors: 30
   segmenter: segmenter
   segmenter_kwargs: {}
   c_dim: 24
 training:
   out_dir: out/pointnet/
-  batch_size: 8
+  batch_size: 1
+  sequential_batches: 16
   learning_rate: 0.0005
-  print_every: 50
-  visualize_every: 500
-  checkpoint_every: 2000
-  validate_every: 500
+  print_every: 100
+  visualize_every: 2500
+  checkpoint_every: 5000
+  validate_every: 2500
   backup_every: 100000
   weighted_loss: True
-  eval_sample: False
   model_selection_metric: iou
   model_selection_mode: maximize
   n_workers: 4
