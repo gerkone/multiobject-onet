@@ -173,8 +173,11 @@ if __name__ == "__main__":
 
                 if sequential_batches > 1:
                     batches = [batch]
-                    for _ in range(sequential_batches - 1):
-                        batches.append(next(train_iter))
+                    try:
+                        for _ in range(sequential_batches - 1):
+                            batches.append(next(train_iter))
+                    except StopIteration:
+                        pass
                 else:
                     batches = batch
 
@@ -220,7 +223,7 @@ if __name__ == "__main__":
                             os.path.join(
                                 out_dir,
                                 "vis",
-                                f"{it}_{data_vis['category']}_{data_vis['it']}.off",
+                                f"{it}_{data_vis['category']}_{data_vis['it']}.obj",
                             )
                         )
 

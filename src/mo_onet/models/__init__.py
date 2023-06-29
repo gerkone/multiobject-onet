@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch import distributions as dist
-from torch.distributions.utils import logits_to_probs
 
 from src.encoder.gconv import MOGConv
 from src.mo_onet.models import decoder, segmenter
@@ -134,10 +133,8 @@ class MultiObjectONet(nn.Module):
         if self.training:
             # return object-wise logits
             return obj_logits
-        # sum over objects in prob space
-        probs = logits_to_probs(obj_logits, is_binary=True)
-        total_probs = probs
-        return dist.Bernoulli(probs=total_probs)
+        # return probabiliity distribution
+        return dist.Bernoulli(logits=obj_logits)
 
     def _get_bbox(self, pc, bs, n_obj, obj_batch):
         bbox = torch.zeros((bs, 2 * n_obj, 3), device=pc.device)

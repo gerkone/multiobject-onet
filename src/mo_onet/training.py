@@ -141,7 +141,7 @@ class Trainer(BaseTrainer):
             )  # (bs, n_obj, total_n_points)
 
         occ_iou_np = (occ_iou >= 0.5).cpu().numpy()
-        for th in [0.3, threshold, 0.7, 0.9]:
+        for th in [0.1, 0.2, 0.3, threshold, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]:
             occ_iou_hat_np = (p_out.probs >= th).cpu().numpy()
             iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
             if th == threshold:
