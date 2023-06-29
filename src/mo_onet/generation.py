@@ -101,7 +101,7 @@ class MultiObjectGenerator3D(object):
         if vol_info is not None:
             self.input_vol, _, _ = vol_info
 
-    def generate_mesh(self, data, return_stats=True):
+    def generate_mesh(self, data, return_stats=True, object_transforms=None):
         """Generates the output mesh.
 
         Args:
@@ -132,7 +132,7 @@ class MultiObjectGenerator3D(object):
 
         stats_dict["time (encode inputs)"] = time.time() - t0
         mesh = self.generate_from_latent(
-            c, stats_dict=stats_dict, node_tag=obj_tag, obj_wise_occ=self.multimesh
+            c, stats_dict=stats_dict, object_transforms=object_transforms, node_tag=obj_tag, obj_wise_occ=self.multimesh
         )
 
         if return_stats:
@@ -140,7 +140,7 @@ class MultiObjectGenerator3D(object):
         else:
             return mesh
 
-    def generate_from_latent(self, c=None, stats_dict={}, **kwargs):
+    def generate_from_latent(self, c=None, stats_dict={}, object_transforms=None, **kwargs):
         """Generates mesh from latent.
             Works for shapes normalized to a unit cube
 
@@ -216,7 +216,7 @@ class MultiObjectGenerator3D(object):
         object_meshes = self.extract_meshes(
             value_grids, c, stats_dict=stats_dict, color=self.multimesh
         )
-        # object_meshes = self.transform_objects(object_meshes)
+        object_meshes = self.transform_objects(object_meshes, object_transforms)
         scene_mesh = trimesh.util.concatenate(object_meshes)
         return scene_mesh
 
@@ -396,8 +396,19 @@ class MultiObjectGenerator3D(object):
 
         return object_meshes
 
-    def transform_objects(self, object_meshes):
-        raise NotImplementedError
+    def transform_objects(self, object_meshes, object_transforms):
+        if object_transforms is None or all([t is None for t in object_transforms]):
+            return object_meshes
+        
+        transformed_meshes = []
+        assert len(object_meshes) == len(object_transforms)
+        for mesh, transform in zip(object_meshes, object_transforms):
+            if transform is None:
+                transformed_meshes.append(mesh)
+            else:
+                transformed_meshes.append(mesh.apply_transform(transform))
+        
+        return transformed_meshes
 
     def estimate_normals(self, vertices, c=None):
         """Estimates the normals by computing the gradient of the objective.
