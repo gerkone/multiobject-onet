@@ -15,6 +15,31 @@ from src.utils.libsimplify import simplify_mesh
 
 counter = 0
 
+COLORS = [
+    # red
+    [255, 0, 0, 255],
+    # green
+    [0, 255, 0, 255],
+    # blue
+    [0, 0, 255, 255],
+    # yellow
+    [255, 255, 0, 255],
+    # pink
+    [255, 0, 255, 255],
+    # light blue
+    [0, 255, 255, 255],
+    # light green
+    [0, 255, 128, 255],
+    # orange
+    [255, 128, 0, 255],
+    # purple
+    [128, 0, 255, 255],
+    # black
+    [0, 0, 0, 255],
+    # grey
+    [128, 128, 128, 255],
+]
+
 
 class MultiObjectGenerator3D(object):
     """Generator class for Occupancy Networks.
@@ -25,6 +50,7 @@ class MultiObjectGenerator3D(object):
         model (nn.Module): trained Occupancy Network model
         points_batch_size (int): batch size for points evaluation
         threshold (float): threshold value
+        multimesh (bool): whether to generate a mesh for each object
         refinement_step (int): number of refinement steps
         device (device): pytorch device
         resolution0 (int): start resolution for MISE
@@ -43,6 +69,7 @@ class MultiObjectGenerator3D(object):
         model,
         points_batch_size=100000,
         threshold=0.5,
+        multimesh=False,
         refinement_step=0,
         device=None,
         resolution0=16,
@@ -59,6 +86,7 @@ class MultiObjectGenerator3D(object):
         self.points_batch_size = points_batch_size
         self.refinement_step = refinement_step
         self.threshold = threshold
+        self.multimesh = multimesh
         self.device = device
         self.resolution0 = resolution0
         self.upsampling_steps = upsampling_steps
@@ -103,7 +131,9 @@ class MultiObjectGenerator3D(object):
                 c, obj_tag = self.model.encode_multi_object(inputs, node_tag)
 
         stats_dict["time (encode inputs)"] = time.time() - t0
-        mesh = self.generate_from_latent(c, stats_dict=stats_dict, node_tag=obj_tag)
+        mesh = self.generate_from_latent(
+            c, stats_dict=stats_dict, node_tag=obj_tag, obj_wise_occ=self.multimesh
+        )
 
         if return_stats:
             return mesh, stats_dict
@@ -124,138 +154,100 @@ class MultiObjectGenerator3D(object):
         # Compute bounding box size
         box_size = 1 + self.padding
 
+        n_obj = kwargs.get("node_tag").max() + 1 if self.multimesh else 1
+
         # Shortcut
         if self.upsampling_steps == 0:
+            raise NotImplementedError
             nx = self.resolution0
             pointsf = box_size * make_3d_grid((-0.5,) * 3, (0.5,) * 3, (nx,) * 3)
 
             values = self.eval_points(pointsf, c, **kwargs).cpu().numpy()
             value_grid = values.reshape(nx, nx, nx)
         else:
-            mesh_extractor = MISE(self.resolution0, self.upsampling_steps, threshold)
+            extractors = [
+                MISE(self.resolution0, self.upsampling_steps, threshold)
+                for _ in range(n_obj)
+            ]
+            obj_points = []
+            # First pass
+            start_points = extractors[0].query()
+            # Query points
+            pointsf = start_points / extractors[0].resolution
+            # Normalize to bounding box
+            pointsf = box_size * (pointsf - 0.5)
+            pointsf = torch.FloatTensor(pointsf).to(self.device)
+            # Evaluate model and update
+            values = [
+                v.squeeze(0).cpu().numpy()
+                for v in self.eval_points(pointsf, c, **kwargs)
+            ]
+            assert len(values) == n_obj, "Object in scene mismatch."
+            for i, (extr, v) in enumerate(zip(extractors, values)):
+                v = v.astype(np.float64)
+                extr.update(start_points, v)
+                obj_points.append(extr.query())
 
-            points = mesh_extractor.query()
-            while points.shape[0] != 0:
-                # Query points
-                pointsf = points / mesh_extractor.resolution
-                # Normalize to bounding box
-                pointsf = box_size * (pointsf - 0.5)
-                pointsf = torch.FloatTensor(pointsf).to(self.device)
-                # Evaluate model and update
-                values = self.eval_points(pointsf, c, **kwargs).cpu().numpy()
-                values = values.astype(np.float64)
-                mesh_extractor.update(points, values)
-                points = mesh_extractor.query()
+            # TODO is there a smarter way without modifying MISE?
+            # Mesh refinement
+            for i, (extr, p) in enumerate(zip(extractors, obj_points)):
+                while p.shape[0] != 0:
+                    # Query points
+                    pointsf = p / extr.resolution
+                    # Normalize to bounding box
+                    pointsf = box_size * (pointsf - 0.5)
+                    pointsf = torch.FloatTensor(pointsf).to(self.device)
+                    # Evaluate model objectwise and update
+                    v = (
+                        self.eval_points(pointsf, c, obj_i=i, **kwargs)
+                        .squeeze(0)
+                        .cpu()
+                        .numpy()
+                    )
+                    v = v.astype(np.float64)
+                    extr.update(p, v)
+                    p = extr.query()
 
-            value_grid = mesh_extractor.to_dense()
+            value_grids = [extr.to_dense() for extr in extractors]
 
         # Extract mesh
         stats_dict["time (eval points)"] = time.time() - t0
 
-        mesh = self.extract_mesh(value_grid, c, stats_dict=stats_dict)
-        return mesh
+        object_meshes = self.extract_meshes(
+            value_grids, c, stats_dict=stats_dict, color=self.multimesh
+        )
+        # object_meshes = self.transform_objects(object_meshes)
+        scene_mesh = trimesh.util.concatenate(object_meshes)
+        return scene_mesh
 
-    def generate_mesh_sliding(self, data, return_stats=True):
-        """Generates the output mesh in sliding-window manner.
-            Adapt for real-world scale.
+    def eval_points(self, p, c=None, obj_i=None, **kwargs):
+        """Evaluates the occupancy values for the points.
 
         Args:
-            data (tensor): data tensor
-            return_stats (bool): whether stats should be returned
+            p (tensor): points
+            c (tensor): encoded feature volumes
         """
-        self.model.eval()
-        device = self.device
-        stats_dict = {}
-
-        threshold = np.log(self.threshold) - np.log(1.0 - self.threshold)
-
-        inputs = data.get("inputs", torch.empty(1, 0)).to(device)
-        kwargs = {}
-
-        # acquire the boundary for every crops
-        self.get_crop_bound(inputs)
-
-        nx = self.resolution0
-        n_crop = self.vol_bound["n_crop"]
-        n_crop_axis = self.vol_bound["axis_n_crop"]
-
-        # occupancy in each direction
-        r = nx * 2**self.upsampling_steps
-        occ_values = np.array([]).reshape(r, r, 0)
-        occ_values_y = np.array([]).reshape(r, 0, r * n_crop_axis[2])
-        occ_values_x = np.array([]).reshape(0, r * n_crop_axis[1], r * n_crop_axis[2])
-        for i in trange(n_crop):
-            # encode the current crop
-            vol_bound = {}
-            vol_bound["query_vol"] = self.vol_bound["query_vol"][i]
-            vol_bound["input_vol"] = self.vol_bound["input_vol"][i]
-            c = self.encode_crop(inputs, device, vol_bound=vol_bound)
-
-            bb_min = self.vol_bound["query_vol"][i][0]
-            bb_max = bb_min + self.vol_bound["query_crop_size"]
-
-            if self.upsampling_steps == 0:
-                t = (bb_max - bb_min) / nx  # inteval
-                pp = (
-                    np.mgrid[
-                        bb_min[0] : bb_max[0] : t[0],
-                        bb_min[1] : bb_max[1] : t[1],
-                        bb_min[2] : bb_max[2] : t[2],
-                    ]
-                    .reshape(3, -1)
-                    .T
-                )
-                pp = torch.from_numpy(pp).to(device)
-                values = (
-                    self.eval_points(pp, c, vol_bound=vol_bound, **kwargs)
-                    .detach()
-                    .cpu()
-                    .numpy()
-                )
-                values = values.reshape(nx, nx, nx)
-            else:
-                mesh_extractor = MISE(
-                    self.resolution0, self.upsampling_steps, threshold
-                )
-                points = mesh_extractor.query()
-                while points.shape[0] != 0:
-                    pp = points / mesh_extractor.resolution
-                    pp = pp * (bb_max - bb_min) + bb_min
-                    pp = torch.from_numpy(pp).to(self.device)
-
-                    values = (
-                        self.eval_points(pp, c, vol_bound=vol_bound, **kwargs)
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
-                    values = values.astype(np.float64)
-                    mesh_extractor.update(points, values)
-                    points = mesh_extractor.query()
-
-                values = mesh_extractor.to_dense()
-                # MISE consider one more voxel around boundary, remove
-                values = values[:-1, :-1, :-1]
-
-            # concatenate occ_value along every axis
-            # along z axis
-            occ_values = np.concatenate((occ_values, values), axis=2)
-            # along y axis
-            if (i + 1) % n_crop_axis[2] == 0:
-                occ_values_y = np.concatenate((occ_values_y, occ_values), axis=1)
-                occ_values = np.array([]).reshape(r, r, 0)
-            # along x axis
-            if (i + 1) % (n_crop_axis[2] * n_crop_axis[1]) == 0:
-                occ_values_x = np.concatenate((occ_values_x, occ_values_y), axis=0)
-                occ_values_y = np.array([]).reshape(r, 0, r * n_crop_axis[2])
-
-        value_grid = occ_values_x
-        mesh = self.extract_mesh(value_grid, c, stats_dict=stats_dict)
-
-        if return_stats:
-            return mesh, stats_dict
+        p_split = torch.split(p, self.points_batch_size)
+        occ_hats = []
+        for pi in p_split:
+            pi = pi.unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                occ_hat = self.model.decode_multi_object(pi, c, **kwargs).logits
+            occ_hats.append(occ_hat.squeeze(0).detach().cpu())
+        occ_hat = torch.cat(occ_hats, dim=-1)  # (pc,) or (obj, pc)
+        # object-wise list of occupancy
+        if self.multimesh:
+            occ_hat = list(occ_hat.split(1, dim=0))
         else:
-            return mesh
+            occ_hat = [occ_hat]
+
+        if obj_i is not None:
+            occ_hat = occ_hat[obj_i]
+
+        return occ_hat
+
+    def generate_mesh_sliding(self, data, return_stats=True):
+        raise NotImplementedError
 
     def get_crop_bound(self, inputs):
         """Divide a scene into crops, get boundary for each crop
@@ -290,59 +282,7 @@ class MultiObjectGenerator3D(object):
         self.vol_bound["query_vol"] = np.stack([lb_query, ub_query], axis=1)
 
     def encode_crop(self, inputs, device, vol_bound=None):
-        """Encode a crop to feature volumes
-
-        Args:
-            inputs (dict): input point cloud
-            device (device): pytorch device
-            vol_bound (dict): volume boundary
-        """
         raise NotImplementedError
-        if vol_bound is None:
-            vol_bound = self.vol_bound
-
-        index = {}
-        for fea in self.vol_bound["fea_type"]:
-            # crop the input point cloud
-            mask_x = (inputs[:, :, 0] >= vol_bound["input_vol"][0][0]) & (
-                inputs[:, :, 0] < vol_bound["input_vol"][1][0]
-            )
-            mask_y = (inputs[:, :, 1] >= vol_bound["input_vol"][0][1]) & (
-                inputs[:, :, 1] < vol_bound["input_vol"][1][1]
-            )
-            mask_z = (inputs[:, :, 2] >= vol_bound["input_vol"][0][2]) & (
-                inputs[:, :, 2] < vol_bound["input_vol"][1][2]
-            )
-            mask = mask_x & mask_y & mask_z
-
-            p_input = inputs[mask]
-            if p_input.shape[0] == 0:  # no points in the current crop
-                p_input = inputs.squeeze()
-                ind = coord2index(
-                    p_input.clone(),
-                    vol_bound["input_vol"],
-                    reso=self.vol_bound["reso"],
-                    plane=fea,
-                )
-                if fea == "grid":
-                    ind[~mask] = self.vol_bound["reso"] ** 3
-                else:
-                    ind[~mask] = self.vol_bound["reso"] ** 2
-            else:
-                ind = coord2index(
-                    p_input.clone(),
-                    vol_bound["input_vol"],
-                    reso=self.vol_bound["reso"],
-                    plane=fea,
-                )
-            index[fea] = ind.unsqueeze(0)
-            input_cur = add_key(
-                p_input.unsqueeze(0), index, "points", "index", device=device
-            )
-
-        with torch.no_grad():
-            c = self.model.encode_multi_object(input_cur)
-        return c
 
     def predict_crop_occ(self, pi, c, vol_bound=None, **kwargs):
         """Predict occupancy values for a crop
@@ -375,117 +315,89 @@ class MultiObjectGenerator3D(object):
 
         return occ_hat
 
-    def eval_points(self, p, c=None, vol_bound=None, **kwargs):
-        """Evaluates the occupancy values for the points.
-
-        Args:
-            p (tensor): points
-            c (tensor): encoded feature volumes
-        """
-        p_split = torch.split(p, self.points_batch_size)
-        occ_hats = []
-        for pi in p_split:
-            if self.input_type == "pointcloud_crop":
-                if self.vol_bound is not None:  # sliding-window manner
-                    occ_hat = self.predict_crop_occ(
-                        pi, c, vol_bound=vol_bound, **kwargs
-                    )
-                    occ_hats.append(occ_hat)
-                else:  # entire scene
-                    pi_in = pi.unsqueeze(0).to(self.device)
-                    pi_in = {"p": pi_in}
-                    p_n = {}
-                    for key in c.keys():
-                        # normalized to the range of [0, 1]
-                        p_n[key] = (
-                            normalize_coord(pi.clone(), self.input_vol, plane=key)
-                            .unsqueeze(0)
-                            .to(self.device)
-                        )
-                    pi_in["p_n"] = p_n
-                    with torch.no_grad():
-                        occ_hat = self.model.decode_multi_object(
-                            pi_in, c, **kwargs
-                        ).logits
-                    occ_hats.append(occ_hat.squeeze(0).detach().cpu())
-            else:
-                pi = pi.unsqueeze(0).to(self.device)
-                with torch.no_grad():
-                    occ_hat = self.model.decode_multi_object(pi, c, **kwargs).logits
-                occ_hats.append(occ_hat.squeeze(0).detach().cpu())
-
-        occ_hat = torch.cat(occ_hats, dim=0)
-        return occ_hat
-
-    def extract_mesh(self, occ_hat, c=None, stats_dict=dict()):
+    def extract_meshes(self, objwise_occ_hat, c=None, color=False, stats_dict=dict()):
         """Extracts the mesh from the predicted occupancy grid.
 
         Args:
-            occ_hat (tensor): value grid of occupancies
+            objwise_occ_hat (list): list of object-wise occupancy grids
             c (tensor): encoded feature volumes
+            color (bool): whether to color the mesh. Different colors for different objects
             stats_dict (dict): stats dictionary
         """
-        # Some short hands
-        n_x, n_y, n_z = occ_hat.shape
-        box_size = 1 + self.padding
-        threshold = np.log(self.threshold) - np.log(1.0 - self.threshold)
-        # Make sure that mesh is watertight
-        t0 = time.time()
-        occ_hat_padded = np.pad(occ_hat, 1, "constant", constant_values=-1e6)
-        vertices, triangles = marching_cubes(occ_hat_padded, threshold)
-        stats_dict["time (marching cubes)"] = time.time() - t0
-        # Strange behaviour in libmcubes: vertices are shifted by 0.5
-        # TODO investigate if its still the case
-        # vertices -= 0.5
-        # # Undo padding
-        vertices -= 1
+        object_meshes = []
+        for i, occ_hat in enumerate(objwise_occ_hat):
+            # Some short hands
+            n_x, n_y, n_z = occ_hat.shape
+            box_size = 1 + self.padding
+            threshold = np.log(self.threshold) - np.log(1.0 - self.threshold)
+            # Make sure that mesh is watertight
+            t0 = time.time()
+            occ_hat_padded = np.pad(occ_hat, 1, "constant", constant_values=-1e6)
+            vertices, triangles = marching_cubes(occ_hat_padded, threshold)
+            stats_dict["time (marching cubes)"] = time.time() - t0
+            # Strange behaviour in libmcubes: vertices are shifted by 0.5
+            # TODO investigate if its still the case
+            # vertices -= 0.5
+            # # Undo padding
+            vertices -= 1
 
-        if self.vol_bound is not None:
-            # Scale the mesh back to its original metric
-            bb_min = self.vol_bound["query_vol"][:, 0].min(axis=0)
-            bb_max = self.vol_bound["query_vol"][:, 1].max(axis=0)
-            mc_unit = max(bb_max - bb_min) / (
-                self.vol_bound["axis_n_crop"].max()
-                * self.resolution0
-                * 2**self.upsampling_steps
+            if self.vol_bound is not None:
+                # Scale the mesh back to its original metric
+                bb_min = self.vol_bound["query_vol"][:, 0].min(axis=0)
+                bb_max = self.vol_bound["query_vol"][:, 1].max(axis=0)
+                mc_unit = max(bb_max - bb_min) / (
+                    self.vol_bound["axis_n_crop"].max()
+                    * self.resolution0
+                    * 2**self.upsampling_steps
+                )
+                vertices = vertices * mc_unit + bb_min
+            else:
+                # Normalize to bounding box
+                vertices /= np.array([n_x - 1, n_y - 1, n_z - 1])
+                vertices = box_size * (vertices - 0.5)
+
+            # Estimate normals if needed
+            if self.with_normals and not vertices.shape[0] == 0:
+                t0 = time.time()
+                normals = self.estimate_normals(vertices, c)
+                stats_dict["time (normals)"] = time.time() - t0
+
+            else:
+                normals = None
+
+            # Create mesh
+            mesh = trimesh.Trimesh(
+                vertices, triangles, vertex_normals=normals, process=False
             )
-            vertices = vertices * mc_unit + bb_min
-        else:
-            # Normalize to bounding box
-            vertices /= np.array([n_x - 1, n_y - 1, n_z - 1])
-            vertices = box_size * (vertices - 0.5)
 
-        # Estimate normals if needed
-        if self.with_normals and not vertices.shape[0] == 0:
-            t0 = time.time()
-            normals = self.estimate_normals(vertices, c)
-            stats_dict["time (normals)"] = time.time() - t0
+            # Directly return if mesh is empty
+            if vertices.shape[0] == 0:
+                return mesh
 
-        else:
-            normals = None
+            # TODO: normals are lost here
+            if self.simplify_nfaces is not None:
+                t0 = time.time()
+                mesh = simplify_mesh(mesh, self.simplify_nfaces, 5.0)
+                stats_dict["time (simplify)"] = time.time() - t0
 
-        # Create mesh
-        mesh = trimesh.Trimesh(
-            vertices, triangles, vertex_normals=normals, process=False
-        )
+            # Refine mesh
+            if self.refinement_step > 0:
+                t0 = time.time()
+                self.refine_mesh(mesh, occ_hat, c)
+                stats_dict["time (refine)"] = time.time() - t0
 
-        # Directly return if mesh is empty
-        if vertices.shape[0] == 0:
-            return mesh
+            # Color mesh
+            if color:
+                mesh.visual.vertex_colors = np.tile(
+                    COLORS[i % len(COLORS)], (len(mesh.vertices), 1)
+                )
 
-        # TODO: normals are lost here
-        if self.simplify_nfaces is not None:
-            t0 = time.time()
-            mesh = simplify_mesh(mesh, self.simplify_nfaces, 5.0)
-            stats_dict["time (simplify)"] = time.time() - t0
+            object_meshes.append(mesh)
 
-        # Refine mesh
-        if self.refinement_step > 0:
-            t0 = time.time()
-            self.refine_mesh(mesh, occ_hat, c)
-            stats_dict["time (refine)"] = time.time() - t0
+        return object_meshes
 
-        return mesh
+    def transform_objects(self, object_meshes):
+        raise NotImplementedError
 
     def estimate_normals(self, vertices, c=None):
         """Estimates the normals by computing the gradient of the objective.

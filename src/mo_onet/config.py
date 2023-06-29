@@ -161,6 +161,7 @@ def get_generator(model, cfg, device, **kwargs):
         model,
         device=device,
         threshold=cfg["test"]["threshold"],
+        multimesh=cfg["generation"]["multimesh"],
         resolution0=cfg["generation"]["resolution_0"],
         upsampling_steps=cfg["generation"]["upsampling_steps"],
         sample=cfg["generation"]["use_sampling"],

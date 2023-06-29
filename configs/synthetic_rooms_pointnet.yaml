@@ -20,7 +20,6 @@ model:
   decoder_kwargs:
     hidden_size: 128
     n_blocks: 5
-    n_neighbors: 30
   segmenter: segmenter
   segmenter_kwargs: {}
   c_dim: 24
@@ -45,6 +44,7 @@ test:
   eval_pointcloud: True
   remove_wall: False
 generation:
+  multimesh: True
   vis_n_outputs: 2
   refine: false
   n_x: 128

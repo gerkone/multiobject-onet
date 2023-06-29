@@ -50,6 +50,7 @@ test:
   remove_wall: False
 generation:
   batch_size: 20000
+  multimesh: False
   refinement_step: 0
   vis_n_outputs: 30
   generate_mesh: True
