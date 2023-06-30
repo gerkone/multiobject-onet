@@ -31,7 +31,7 @@ training:
   print_every: 100
   visualize_every: 2500
   checkpoint_every: 5000
-  validate_every: 2500
+  validate_every: 1000
   backup_every: 100000
   weighted_loss: True
   model_selection_metric: iou

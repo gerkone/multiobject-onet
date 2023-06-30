@@ -1,9 +1,10 @@
 import yaml
 from torchvision import transforms
 
-from src import conv_onet, data, mo_onet
+from src import data, onet, conv_onet, mo_onet
 
 method_dict = {
+    "onet": onet,
     "conv_onet": conv_onet,
     "mo_onet": mo_onet,
 }

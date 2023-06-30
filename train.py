@@ -181,7 +181,11 @@ if __name__ == "__main__":
                 else:
                     batches = batch
 
-                loss, actual_bs = trainer.train_step(batches)
+                out = trainer.train_step(batches)
+                if isinstance(out, tuple):
+                    loss, actual_bs = out
+                else:
+                    loss, actual_bs = out, batch_size
 
                 if loss is not None:
                     logger.add_scalar("train/loss", loss, it)

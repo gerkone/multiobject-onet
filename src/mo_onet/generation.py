@@ -132,7 +132,11 @@ class MultiObjectGenerator3D(object):
 
         stats_dict["time (encode inputs)"] = time.time() - t0
         mesh = self.generate_from_latent(
-            c, stats_dict=stats_dict, object_transforms=object_transforms, node_tag=obj_tag, obj_wise_occ=self.multimesh
+            c,
+            stats_dict=stats_dict,
+            object_transforms=object_transforms,
+            node_tag=obj_tag,
+            obj_wise_occ=self.multimesh,
         )
 
         if return_stats:
@@ -140,7 +144,9 @@ class MultiObjectGenerator3D(object):
         else:
             return mesh
 
-    def generate_from_latent(self, c=None, stats_dict={}, object_transforms=None, **kwargs):
+    def generate_from_latent(
+        self, c=None, stats_dict={}, object_transforms=None, **kwargs
+    ):
         """Generates mesh from latent.
             Works for shapes normalized to a unit cube
 
@@ -399,7 +405,7 @@ class MultiObjectGenerator3D(object):
     def transform_objects(self, object_meshes, object_transforms):
         if object_transforms is None or all([t is None for t in object_transforms]):
             return object_meshes
-        
+
         transformed_meshes = []
         assert len(object_meshes) == len(object_transforms)
         for mesh, transform in zip(object_meshes, object_transforms):
@@ -407,7 +413,7 @@ class MultiObjectGenerator3D(object):
                 transformed_meshes.append(mesh)
             else:
                 transformed_meshes.append(mesh.apply_transform(transform))
-        
+
         return transformed_meshes
 
     def estimate_normals(self, vertices, c=None):
