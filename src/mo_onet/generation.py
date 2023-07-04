@@ -54,13 +54,11 @@ class MultiObjectGenerator3D(object):
         refinement_step (int): number of refinement steps
         device (device): pytorch device
         resolution0 (int): start resolution for MISE
-        upsampling steps (int): number of upsampling steps
+        upsampling_steps (int): number of upsampling steps
         with_normals (bool): whether normals should be estimated
         padding (float): how much padding should be used for MISE
         sample (bool): whether z should be sampled
         input_type (str): type of input
-        vol_info (dict): volume infomation
-        vol_bound (dict): volume boundary
         simplify_nfaces (int): number of faces the mesh should be simplified to
     """
 
@@ -78,10 +76,12 @@ class MultiObjectGenerator3D(object):
         padding=0.1,
         sample=False,
         input_type=None,
-        vol_info=None,
-        vol_bound=None,
         simplify_nfaces=None,
     ):
+        assert (
+            input_type == "pointcloud"
+        ), "Multi-object generator only supports pointclouds"
+
         self.model = model.to(device)
         self.points_batch_size = points_batch_size
         self.refinement_step = refinement_step
@@ -95,11 +95,6 @@ class MultiObjectGenerator3D(object):
         self.padding = padding
         self.sample = sample
         self.simplify_nfaces = simplify_nfaces
-
-        # for pointcloud_crop
-        self.vol_bound = vol_bound
-        if vol_info is not None:
-            self.input_vol, _, _ = vol_info
 
     def generate_mesh(
         self, data, return_stats=True, object_transforms=None, objwise_meshes=False
@@ -120,17 +115,12 @@ class MultiObjectGenerator3D(object):
 
         t0 = time.time()
 
-        # obtain features for all crops
-        if self.vol_bound is not None:
-            self.get_crop_bound(inputs)
-            c = self.encode_crop(inputs, device)
-        else:  # input the entire volume
-            inputs = add_key(
-                inputs, data.get("inputs.ind"), "points", "index", device=device
-            )
-            t0 = time.time()
-            with torch.no_grad():
-                c, obj_tag = self.model.encode_multi_object(inputs, node_tag)
+        inputs = add_key(
+            inputs, data.get("inputs.ind"), "points", "index", device=device
+        )
+        t0 = time.time()
+        with torch.no_grad():
+            c, obj_tag = self.model.encode_multi_object(inputs, node_tag)
 
         stats_dict["time (encode inputs)"] = time.time() - t0
         mesh = self.generate_from_latent(
@@ -170,14 +160,13 @@ class MultiObjectGenerator3D(object):
 
         n_obj = kwargs.get("node_tag").max() + 1 if self.multimesh else 1
 
-        # Shortcut
+        # No MISE
         if self.upsampling_steps == 0:
-            raise NotImplementedError
             nx = self.resolution0
             pointsf = box_size * make_3d_grid((-0.5,) * 3, (0.5,) * 3, (nx,) * 3)
 
-            values = self.eval_points(pointsf, c, **kwargs).cpu().numpy()
-            value_grid = values.reshape(nx, nx, nx)
+            values = self.eval_points(pointsf, c, **kwargs)
+            value_grids = [v.cpu().numpy().reshape(nx, nx, nx) for v in values]
         else:
             extractors = [
                 MISE(self.resolution0, self.upsampling_steps, threshold)
@@ -262,75 +251,6 @@ class MultiObjectGenerator3D(object):
 
         return occ_hat
 
-    def generate_mesh_sliding(self, data, return_stats=True):
-        raise NotImplementedError
-
-    def get_crop_bound(self, inputs):
-        """Divide a scene into crops, get boundary for each crop
-
-        Args:
-            inputs (dict): input point cloud
-        """
-        query_crop_size = self.vol_bound["query_crop_size"]
-        input_crop_size = self.vol_bound["input_crop_size"]
-
-        lb = inputs.min(axis=1).values[0].cpu().numpy() - 0.01
-        ub = inputs.max(axis=1).values[0].cpu().numpy() + 0.01
-        lb_query = (
-            np.mgrid[
-                lb[0] : ub[0] : query_crop_size,
-                lb[1] : ub[1] : query_crop_size,
-                lb[2] : ub[2] : query_crop_size,
-            ]
-            .reshape(3, -1)
-            .T
-        )
-        ub_query = lb_query + query_crop_size
-        center = (lb_query + ub_query) / 2
-        lb_input = center - input_crop_size / 2
-        ub_input = center + input_crop_size / 2
-        # number of crops alongside x,y, z axis
-        self.vol_bound["axis_n_crop"] = np.ceil((ub - lb) / query_crop_size).astype(int)
-        # total number of crops
-        num_crop = np.prod(self.vol_bound["axis_n_crop"])
-        self.vol_bound["n_crop"] = num_crop
-        self.vol_bound["input_vol"] = np.stack([lb_input, ub_input], axis=1)
-        self.vol_bound["query_vol"] = np.stack([lb_query, ub_query], axis=1)
-
-    def encode_crop(self, inputs, device, vol_bound=None):
-        raise NotImplementedError
-
-    def predict_crop_occ(self, pi, c, vol_bound=None, **kwargs):
-        """Predict occupancy values for a crop
-
-        Args:
-            pi (dict): query points
-            c (tensor): encoded feature volumes
-            vol_bound (dict): volume boundary
-        """
-        occ_hat = pi.new_empty((pi.shape[0]))
-
-        if pi.shape[0] == 0:
-            return occ_hat
-        pi_in = pi.unsqueeze(0)
-        pi_in = {"p": pi_in}
-        p_n = {}
-        for key in self.vol_bound["fea_type"]:
-            # projected coordinates normalized to the range of [0, 1]
-            p_n[key] = (
-                normalize_coord(pi.clone(), vol_bound["input_vol"], plane=key)
-                .unsqueeze(0)
-                .to(self.device)
-            )
-        pi_in["p_n"] = p_n
-
-        # predict occupancy of the current crop
-        with torch.no_grad():
-            occ_cur = self.model.decode(pi_in, c, **kwargs).logits
-        occ_hat = occ_cur.squeeze(0)
-
-        return occ_hat
-
     def extract_meshes(self, objwise_occ_hat, c=None, color=False, stats_dict=dict()):
         """Extracts the mesh from the predicted occupancy grid.
 
@@ -357,20 +277,9 @@ class MultiObjectGenerator3D(object):
             # # Undo padding
             vertices -= 1
 
-            if self.vol_bound is not None:
-                # Scale the mesh back to its original metric
-                bb_min = self.vol_bound["query_vol"][:, 0].min(axis=0)
-                bb_max = self.vol_bound["query_vol"][:, 1].max(axis=0)
-                mc_unit = max(bb_max - bb_min) / (
-                    self.vol_bound["axis_n_crop"].max()
-                    * self.resolution0
-                    * 2**self.upsampling_steps
-                )
-                vertices = vertices * mc_unit + bb_min
-            else:
-                # Normalize to bounding box
-                vertices /= np.array([n_x - 1, n_y - 1, n_z - 1])
-                vertices = box_size * (vertices - 0.5)
+            # Normalize to bounding box
+            vertices /= np.array([n_x - 1, n_y - 1, n_z - 1])
+            vertices = box_size * (vertices - 0.5)
 
             # Estimate normals if needed
             if self.with_normals and not vertices.shape[0] == 0:
