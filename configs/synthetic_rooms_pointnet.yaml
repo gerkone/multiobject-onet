@@ -29,7 +29,7 @@ training:
   sequential_batches: 16
   learning_rate: 0.0005
   print_every: 100
-  visualize_every: 2500
+  visualize_every: 2000
   checkpoint_every: 5000
   validate_every: 1000
   backup_every: 100000
@@ -39,7 +39,7 @@ training:
   n_workers: 4
   n_workers_val: 2
 test:
-  threshold: 0.5
+  threshold: 0.9
   eval_mesh: True
   eval_pointcloud: True
   remove_wall: False

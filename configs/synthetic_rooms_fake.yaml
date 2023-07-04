@@ -25,14 +25,14 @@ model:
   segmenter: segmenter
   segmenter_kwargs: {}
   c_dim: 24
-  fake_segmentation: False
+  fake_segmentation: True
 training:
-  out_dir:  out/gconv/
+  out_dir:  out/gconv_fake/
   batch_size: 1
   sequential_batches: 2
   learning_rate: 0.0005
   print_every: 100
-  visualize_every: 2000
+  visualize_every: 2500
   checkpoint_every: 5000
   validate_every: 1000
   backup_every: 100000
@@ -47,7 +47,7 @@ test:
   eval_pointcloud: True
   remove_wall: False
 generation:
-  multimesh: True
+  multimesh: False
   vis_n_outputs: 2
   refine: false
   n_x: 128
