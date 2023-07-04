@@ -3,7 +3,7 @@ import os
 import torch
 
 from src import data
-from src.common import decide_total_volume_range, update_reso
+from src.common import update_reso
 from src.encoder import encoder_dict
 from src.mo_onet import models, training, generation
 
@@ -35,7 +35,7 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
         encoder_kwargs["unit_size"] = cfg["data"]["unit_size"]
         decoder_kwargs["unit_size"] = cfg["data"]["unit_size"]
         segmenter_kwargs["unit_size"] = cfg["data"]["unit_size"]
-    except:
+    except KeyError:
         pass
     # local positional encoding
     if "local_coord" in cfg["model"].keys():

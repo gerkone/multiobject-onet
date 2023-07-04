@@ -55,23 +55,6 @@ class Trainer(BaseTrainer):
         self.optimizer.zero_grad()
 
         try:
-            # bs = data["points"].shape[0]
-            # same_n_obj = all(
-            #     data["inputs.node_tags"][i].unique().shape[0]
-            #     == batch["inputs.node_tags"][0].unique().shape[0]
-            #     for i in range(bs)
-            # )
-
-            # filter elements with different number of objects
-            # mask = [
-            #     batch["inputs.node_tags"][i].unique().shape[0] == 5 for i in range(bs)
-            # ]
-
-            # if not any(mask):
-            #     return 0.0, 0
-
-            # batch = {k: v[mask] for k, v in batch.items()}
-
             if isinstance(batch, List):
                 loss = 0.0
                 for sample_i in batch:
@@ -81,10 +64,12 @@ class Trainer(BaseTrainer):
                 loss = self.compute_loss(batch)
                 actual_bs = batch["points"].shape[0]
 
-            # TODO (GAL) vmap is very slow right now. Try to go back to batching
-            # loss = torch.vmap(self.compute_loss, in_dims=(0, None), randomness="same")(
-            #     data, n_obj
-            # ).mean()
+            # TODO (GAL) vmap is very slow right now
+            # loss = torch.vmap(
+            #     self.compute_loss,
+            #     in_dims=(0, None),
+            #     randomness="same"
+            # )(data, n_obj).mean()
 
             loss.backward()
             self.optimizer.step()

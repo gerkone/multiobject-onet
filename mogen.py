@@ -1,13 +1,9 @@
 import argparse
-import datetime
 import os
-import time
 import shutil
 from collections import defaultdict
 
 import warnings
-
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import numpy as np
 import torch
@@ -15,6 +11,8 @@ import trimesh
 
 from src import config, data
 from src.checkpoints import CheckpointIO
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 if __name__ == "__main__":
     # Arguments
@@ -45,7 +43,7 @@ if __name__ == "__main__":
     # Output directory
     os.makedirs(out_dir, exist_ok=True)
 
-    png_path = os.path.join(out_dir, f"figs/")
+    png_path = os.path.join(out_dir, "figs/")
     os.makedirs(png_path, exist_ok=True)
 
     shutil.copyfile(args.config, os.path.join(out_dir, "config.yaml"))

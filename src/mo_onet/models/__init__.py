@@ -37,6 +37,7 @@ class MultiObjectONet(nn.Module):
         self.segmenter = segmenter.to(device)
         self.object_encoder = object_encoder.to(device)
         self.scene_encoder = MOGConv(c_dim=8, hidden_size=16, n_neighbors=-1).to(device)
+        # self.scene_encoder = EGNN(c_dim=8, hidden_size=16, n_neighbors=-1).to(device)
 
         self._fake_segmentation = fake_segmentation
         self._device = device

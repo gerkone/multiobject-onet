@@ -8,7 +8,7 @@ from mcubes import marching_cubes
 from torch import autograd
 from tqdm import trange
 
-from src.common import add_key, coord2index, make_3d_grid, normalize_coord
+from src.common import add_key, make_3d_grid
 
 from src.utils.libmise import MISE
 from src.utils.libsimplify import simplify_mesh
@@ -257,7 +257,7 @@ class MultiObjectGenerator3D(object):
         Args:
             objwise_occ_hat (list): list of object-wise occupancy grids
             c (tensor): encoded feature volumes
-            color (bool): whether to color the mesh. Different colors for different objects
+            color (bool): whether to color the mesh. Different colors per-object
             stats_dict (dict): stats dictionary
         """
         object_meshes = []

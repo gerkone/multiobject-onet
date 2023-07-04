@@ -7,8 +7,6 @@ from collections import defaultdict
 
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import numpy as np
 import torch
 import torch.optim as optim
@@ -16,6 +14,8 @@ from tensorboardX import SummaryWriter
 
 from src import config, data
 from src.checkpoints import CheckpointIO
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 if __name__ == "__main__":
     # Arguments

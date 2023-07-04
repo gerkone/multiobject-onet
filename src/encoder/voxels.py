@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# from torch_scatter import scatter_mean
+from torch_scatter import scatter_mean
 
 from src.common import coordinate2index, normalize_3d_coordinate, normalize_coordinate
 from src.encoder.unet import UNet

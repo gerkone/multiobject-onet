@@ -214,10 +214,7 @@ def query_ball_point(radius, nsample, xyz, new_xyz, batchx=None, batchy=None):
     sqrdists = square_distance(new_xyz, xyz, batchx, batchy)
     group_idx[sqrdists > radius**2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
-    try:
-        group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
-    except:
-        print(group_idx.shape)
+    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
     mask = group_idx == N
     group_idx[mask] = group_first[mask]
     return group_idx

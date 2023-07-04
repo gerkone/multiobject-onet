@@ -230,7 +230,8 @@ class E3GatedBlock(nn.Module):
     References:
 
     .. [#painn1] Schütt, Unke, Gastegger:
-       Equivariant message passing for the prediction of tensorial properties and molecular spectra.
+       Equivariant message passing for the prediction of tensorial properties and
+       molecular spectra.
        ICML 2021 (to appear)
 
     """
