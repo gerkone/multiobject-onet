@@ -1,7 +1,7 @@
 method: mo_onet
 data:
   dataset: Shapes3D
-  path: /local/disk1/gg/data/synthetic_room_dataset_mo
+  path:
   classes: null
   input_type: pointcloud
   train_split: train

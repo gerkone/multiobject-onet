@@ -2,7 +2,7 @@ method: mo_onet
 data:
   input_type: pointcloud
   classes: ["rooms_04", "rooms_05", "rooms_06", "rooms_07", "rooms_08"]
-  path: /local/disk1/gg/data/synthetic_room_dataset_mo
+  path: data/synthetic_room_dataset_mo
   pointcloud_n: 5000
   pointcloud_noise: 0.001
   points_subsample: 2048
@@ -14,8 +14,10 @@ data:
   multi_files: 10
   voxels_file: null
 model:
-  encoder: pointnet_plus_plus
-  encoder_kwargs: {}
+  encoder: gconv
+  encoder_kwargs:
+    hidden_size: 128
+    n_neighbors: 30
   decoder: gconv_decoder      
   decoder_kwargs:
     hidden_size: 128
@@ -23,13 +25,14 @@ model:
   segmenter: segmenter
   segmenter_kwargs: {}
   c_dim: 24
+  fake_segmentation: True
 training:
-  out_dir: out/pointnet/
+  out_dir:  out/gconv_fake/
   batch_size: 1
-  sequential_batches: 16
+  sequential_batches: 2
   learning_rate: 0.0005
   print_every: 100
-  visualize_every: 2000
+  visualize_every: 2500
   checkpoint_every: 5000
   validate_every: 1000
   backup_every: 100000
@@ -37,14 +40,14 @@ training:
   model_selection_metric: iou
   model_selection_mode: maximize
   n_workers: 4
-  n_workers_val: 2
+  n_workers_val: 4
 test:
   threshold: 0.9
   eval_mesh: True
   eval_pointcloud: True
   remove_wall: False
 generation:
-  multimesh: True
+  multimesh: False
   vis_n_outputs: 2
   refine: false
   n_x: 128
