@@ -98,10 +98,16 @@ class Trainer(BaseTrainer):
             p_out = self.model(points_iou, inputs, sample=self.eval_sample, **kwargs)
 
         occ_iou_np = (occ_iou >= 0.5).cpu().numpy()
-        occ_iou_hat_np = (p_out.probs >= threshold).cpu().numpy()
-
-        iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
-        eval_dict["iou"] = iou
+        thresholds = [0.5, 0.7, 0.9, 0.95, 0.99]
+        if threshold not in thresholds:
+            thresholds.append(threshold)
+        for th in thresholds:
+            occ_iou_hat_np = (p_out.probs >= th).cpu().numpy()
+            iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
+            if th == threshold:
+                eval_dict["iou"] = iou
+            else:
+                eval_dict[f"iou{int(th * 100)}%"] = iou
 
         # Estimate voxel iou
         if voxels_occ is not None:

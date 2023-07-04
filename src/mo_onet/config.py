@@ -23,6 +23,7 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
     encoder = cfg["model"]["encoder"]
     n_nodes = cfg["data"]["pointcloud_n"]
     c_dim = cfg["model"]["c_dim"]
+    fake_segmentation = cfg["model"]["fake_segmentation"]
     decoder_kwargs = cfg["model"]["decoder_kwargs"]
     segmenter_kwargs = cfg["model"]["segmenter_kwargs"]
     # TODO
@@ -81,7 +82,9 @@ def get_model(cfg, device=None, dataset=None, **kwargs):
         ckp = segmenter.filter_state_dict(ckp)
         segmenter.load_state_dict(ckp["model_state_dict"], strict=False)
 
-    model = models.MultiObjectONet(decoder, segmenter, encoder, device=device)
+    model = models.MultiObjectONet(
+        decoder, segmenter, encoder, fake_segmentation=fake_segmentation, device=device
+    )
 
     return model
 

@@ -28,7 +28,9 @@ class MultiObjectONet(nn.Module):
         device (device): torch device
     """
 
-    def __init__(self, decoder, segmenter, object_encoder, device=None):
+    def __init__(
+        self, decoder, segmenter, object_encoder, fake_segmentation=False, device=None
+    ):
         super().__init__()
 
         self.decoder = decoder.to(device)
@@ -36,7 +38,7 @@ class MultiObjectONet(nn.Module):
         self.object_encoder = object_encoder.to(device)
         self.scene_encoder = MOGConv(c_dim=8, hidden_size=16, n_neighbors=-1).to(device)
 
-        self._fake_segmentation = False
+        self._fake_segmentation = fake_segmentation
         self._device = device
 
     def forward(self, q, pc, **kwargs):

@@ -101,7 +101,9 @@ class MultiObjectGenerator3D(object):
         if vol_info is not None:
             self.input_vol, _, _ = vol_info
 
-    def generate_mesh(self, data, return_stats=True, object_transforms=None):
+    def generate_mesh(
+        self, data, return_stats=True, object_transforms=None, objwise_meshes=False
+    ):
         """Generates the output mesh.
 
         Args:
@@ -135,6 +137,7 @@ class MultiObjectGenerator3D(object):
             c,
             stats_dict=stats_dict,
             object_transforms=object_transforms,
+            objwise_meshes=objwise_meshes,
             node_tag=obj_tag,
             obj_wise_occ=self.multimesh,
         )
@@ -145,7 +148,12 @@ class MultiObjectGenerator3D(object):
             return mesh
 
     def generate_from_latent(
-        self, c=None, stats_dict={}, object_transforms=None, **kwargs
+        self,
+        c=None,
+        stats_dict={},
+        object_transforms=None,
+        objwise_meshes=False,
+        **kwargs
     ):
         """Generates mesh from latent.
             Works for shapes normalized to a unit cube
@@ -224,6 +232,8 @@ class MultiObjectGenerator3D(object):
         )
         object_meshes = self.transform_objects(object_meshes, object_transforms)
         scene_mesh = trimesh.util.concatenate(object_meshes)
+        if objwise_meshes:
+            return scene_mesh, object_meshes
         return scene_mesh
 
     def eval_points(self, p, c=None, obj_i=None, **kwargs):
@@ -396,6 +406,10 @@ class MultiObjectGenerator3D(object):
             if color:
                 mesh.visual.vertex_colors = np.tile(
                     COLORS[i % len(COLORS)], (len(mesh.vertices), 1)
+                )
+            else:
+                mesh.visual.vertex_colors = np.tile(
+                    [196, 196, 196, 255], (len(mesh.vertices), 1)
                 )
 
             object_meshes.append(mesh)

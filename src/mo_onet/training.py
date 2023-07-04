@@ -135,13 +135,14 @@ class Trainer(BaseTrainer):
         # Compute iou
         with torch.no_grad():
             # p_out = self.model(points_iou, inputs, **kwargs)
-            codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
-            p_out = self.model.decode_multi_object(
-                points_iou, codes, node_tag=obj_batch
-            )  # (bs, n_obj, total_n_points)
+            c, obj_batch = self.model.encode_multi_object(inputs, node_tag)
+            p_out = self.model.decode_multi_object(points_iou, c, node_tag=obj_batch)
 
         occ_iou_np = (occ_iou >= 0.5).cpu().numpy()
-        for th in [0.1, 0.2, 0.3, threshold, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]:
+        thresholds = [0.5, 0.7, 0.9, 0.95, 0.99]
+        if threshold not in thresholds:
+            thresholds.append(threshold)
+        for th in thresholds:
             occ_iou_hat_np = (p_out.probs >= th).cpu().numpy()
             iou = compute_iou(occ_iou_np, occ_iou_hat_np).mean()
             if th == threshold:

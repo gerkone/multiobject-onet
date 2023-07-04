@@ -220,6 +220,10 @@ class Generator3D(object):
             self.refine_mesh(mesh, occ_hat, z, c)
             stats_dict["time (refine)"] = time.time() - t0
 
+        mesh.visual.vertex_colors = np.tile(
+            [196, 196, 196, 255], (len(mesh.vertices), 1)
+        )
+
         return mesh
 
     def estimate_normals(self, vertices, z, c=None):
