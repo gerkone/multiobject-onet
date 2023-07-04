@@ -165,7 +165,6 @@ class Trainer(BaseTrainer):
         device = self.device
         p = data.get("points").to(device)
         target_occ = data.get("points.occ").to(device)  # (bs, n_points,)
-        # node_occs = data.get("inputs.node_occs").to(device)  # (bs, n_obj, n_points)
 
         inputs = data.get("inputs", torch.empty(p.size(0), 0)).to(device)
         node_tag = data.get("inputs.node_tags").to(device)  # (bs, pc)
@@ -180,7 +179,6 @@ class Trainer(BaseTrainer):
             p = add_key(p, data.get("points.normalized"), "p", "p_n", device=device)
 
         # segment and split objects
-        # TODO real instance segmentation
         # node_tag, _ = self.model.segment_to_single_graphs(inputs)
 
         codes, obj_batch = self.model.encode_multi_object(inputs, node_tag)
@@ -189,30 +187,17 @@ class Trainer(BaseTrainer):
             p, codes, node_tag=obj_batch
         )  # (bs, n_obj, total_n_points)
 
-        # assert pred_occ.shape == node_occs.shape, "Must return object-wise occupancy."
-
         if self.weighted_loss:
             ones_ratio = target_occ.sum() / target_occ.numel()
             weight = torch.where(target_occ > 0, 1 - ones_ratio, ones_ratio + 1e-2)
         else:
             weight = torch.ones_like(target_occ)
 
-        # object_reconstruction_loss = (
-        #     F.binary_cross_entropy_with_logits(pred_occ, node_occs, reduce=False)
-        #     # sum over points
-        #     .sum(-1)
-        #     # sum over objects
-        #     .sum(-1)
-        # )
-
         scene_reconstruction_loss = F.binary_cross_entropy_with_logits(
             pred_occ.sum(1), target_occ, reduction="none", weight=weight
         ).sum(-1)
 
         # average over batch
-        total_loss = (
-            scene_reconstruction_loss.mean()
-            # + 0.5 * object_reconstruction_loss.mean()
-        )
+        total_loss = scene_reconstruction_loss.mean()
 
         return total_loss
