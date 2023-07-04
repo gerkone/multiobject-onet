@@ -97,8 +97,6 @@ if __name__ == "__main__":
         )
 
     # For visualizations
-    val_dataset = config.get_dataset("test", cfg, return_idx=True)
-
     vis_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=1,
