@@ -7,8 +7,6 @@ from collections import defaultdict
 
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import numpy as np
 import torch
 import torch.optim as optim
@@ -17,10 +15,21 @@ from tensorboardX import SummaryWriter
 from src import config, data
 from src.checkpoints import CheckpointIO
 
+warnings.filterwarnings("ignore", category=UserWarning)
+
 if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser(description="Train a 3D reconstruction model.")
-    parser.add_argument("--config", type=str, help="Path to config file.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        default="configs/default.yaml",
+        help="Path to config file.",
+    )
+    parser.add_argument(
+        "--data-path", type=str, required=False, default=None, help="Path to dataset."
+    )
     parser.add_argument(
         "--new", action="store_true", help="Ignore checkpoints, start new training."
     )
@@ -37,8 +46,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     cfg = config.load_config(args.config, "configs/default.yaml")
 
+    if args.data_path is not None:
+        cfg["data"]["path"] = args.data_path
+
     is_cuda = torch.cuda.is_available() and not args.no_cuda
     device = torch.device("cuda" if is_cuda else "cpu")
+
     # Set t0
     t0 = datetime.datetime.now()
 

@@ -43,9 +43,9 @@ class ConvolutionalOccupancyNetwork(nn.Module):
         """
         #############
         if isinstance(p, dict):
-            batch_size = p["p"].size(0)
+            p["p"].size(0)
         else:
-            batch_size = p.size(0)
+            p.size(0)
         c = self.encode_inputs(inputs)
         p_r = self.decode(p, c, **kwargs)
         return p_r

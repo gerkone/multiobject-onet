@@ -5,7 +5,6 @@ import os
 from src.encoder import encoder_dict
 from src.onet import models, training, generation
 from src import data
-from src import config
 
 
 def get_model(cfg, device=None, dataset=None, **kwargs):

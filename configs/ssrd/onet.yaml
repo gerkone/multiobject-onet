@@ -1,11 +1,11 @@
-method: mo_onet
+method: onet
 data:
   input_type: pointcloud
   classes: ["rooms_04", "rooms_05", "rooms_06", "rooms_07", "rooms_08"]
-  path: /local/disk1/gg/data/synthetic_room_dataset_mo
-  pointcloud_n: 2000
+  path: data/synthetic_room_dataset_mo
+  pointcloud_n: 5000
   pointcloud_noise: 0.001
-  points_subsample: 1024
+  points_subsample: 2048
   points_file: points_iou
   item_file: item_dict
   points_iou_file: points_iou
@@ -14,36 +14,30 @@ data:
   multi_files: 10
   voxels_file: null
 model:
-  encoder: egnn
-  encoder_kwargs: 
-    hidden_size: 96
-    n_layers: 5
-    n_neighbors: 30
-    instance_norm: True
-    attention: True
-  decoder: gconv_decoder      
+  encoder_latent: null
+  decoder: cbatchnorm
   decoder_kwargs:
     hidden_size: 128
-    n_blocks: 4
-    n_neighbors: 30
-  segmenter: segmenter
-  segmenter_kwargs: {}
-  c_dim: 24
+  encoder: pointnet_resnet
+  encoder_kwargs:
+    hidden_dim: 128
+  encoder_latent_kwargs: {}
+  c_dim: 256
+  z_dim: 0
 training:
-  out_dir: out/egnn/
-  batch_size: 4
+  out_dir:  out/onet
+  batch_size: 32
   learning_rate: 0.0005
-  print_every: 50
+  print_every: 100
   visualize_every: 2000
-  checkpoint_every: 5000
+  checkpoint_every: 2000
   validate_every: 1000
   backup_every: 100000
-  weighted_loss: True
   eval_sample: False
   model_selection_metric: iou
   model_selection_mode: maximize
   n_workers: 4
-  n_workers_val: 2
+  n_workers_val: 4
 test:
   threshold: 0.5
   eval_mesh: True

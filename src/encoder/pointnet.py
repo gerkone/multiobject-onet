@@ -122,7 +122,7 @@ class LocalPoolPointnet(nn.Module):
         return fea_grid
 
     def pool_local(self, xy, index, c):
-        bs, fea_dim = c.size(0), c.size(2)
+        fea_dim = c.size(2)
         keys = xy.keys()
 
         c_out = 0
@@ -319,7 +319,7 @@ class PatchLocalPoolPointnet(nn.Module):
         return fea_grid
 
     def pool_local(self, index, c):
-        bs, fea_dim = c.size(0), c.size(2)
+        fea_dim = c.size(2)
         keys = index.keys()
 
         c_out = 0
