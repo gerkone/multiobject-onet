@@ -1,8 +1,9 @@
 # MOONet :cow: : Multi-Object Occupancy Networks
 
-Repository for the 2023 ADL4CV project __"Multi-Object Occupancy Networks"__ by Gianluca Galletti and Nina Kirakosyan.
+Repository for the 2023 [ADL4CV](https://niessner.github.io/ADL4CV/) project __"Multi-Object Occupancy Networks"__ by Gianluca Galletti and Nina Kirakosyan. <br>
+[[Report]](https://github.com/gerkone/multiobject-onet/blob/main/assets/report.pdf) &nbsp;&nbsp; [[Poster]](https://github.com/gerkone/multiobject-onet/blob/main/assets/poster.pdf)
 
-__Abstract:__ Reliably reconstructing full 3D scenes from sparse representations, such as point clouds, has been a very active topic of research in the recent years. Learnable 3D implicit functions are a popular class of models that have been shown to be very successful when applied to this task. Despite the promising results, most of the current SotA models still consider the entire scene as one object, and discard any semantic information coming from the objects placed in the scene. 
+> __Abstract:__ Reliably reconstructing full 3D scenes from sparse representations, such as point clouds, has been a very active topic of research in the recent years. Learnable 3D implicit functions are a popular class of models that have been shown to be very successful when applied to this task. Despite the promising results, most of the current SotA models still consider the entire scene as one object, and discard any semantic information coming from the objects placed in the scene. 
 We propose Multi-Object Occupancy Networks (MOONets in short), which are a novel set of implicit functions that explicitly make use of object segmentation, by encoding, decoding and reconstructing each object in the scene separately. This has the double advantage of leveraging semantic information from instance segmentation, and inducing perfect robustness towards object transformations.
 Additionally, we contribute with our custom synthetic room dataset, augmented with ground truth object instance segmentation.
 We achieve results comparable to the state of the art on the synthetic rooms dataset. While not improving on previous works, our method enables reliable on-the-fly reconstruction of scenes with any object-wise transformation, with a single forward pass and without any loss of performance.
